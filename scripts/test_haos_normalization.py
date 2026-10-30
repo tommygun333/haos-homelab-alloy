@@ -75,7 +75,7 @@ assert not REJECT_CORE.fullmatch('hassio_supervisor')
 assert not REJECT_CORE.fullmatch('app_9f46d388_homelab_alloy')
 assert not REJECT_CORE.fullmatch('dockerd')
 
-assert 'version: "0.1.7"' in app
+assert 'version: "0.1.8"' in app
 assert 'path          = "/var/log/journal"' in alloy
 assert 'source_labels = ["__journal_syslog_identifier"]\n    regex         = "homeassistant"\n    action        = "drop"' in alloy
 assert alloy.index('action        = "drop"') < alloy.index('target_label  = "unit"')
@@ -104,7 +104,7 @@ for fragment in ('source = "effective_severity"', 'source_labels = ["unit", "sys
 # Retain previous Docker/journal severity regression examples. This parsing
 # emulates only the anchored patterns; the runtime Alloy CI validates HCL.
 PYLOG = re.compile(r'(?i)^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?(?:Z|[+-]\d{2}:\d{2})?\s+(?P<app_level>TRACE|DEBUG|INFO|NOTICE|WARN|WARNING|ERROR|CRITICAL|FATAL)\b')
-GOTIME = re.compile(r'(?i)^(?:ts=\S+|time="[^"]+"|time=\S+)\s+level=(?P<app_level>TRACE|DEBUG|INFO|NOTICE|WARN|WARNING|ERROR|CRITICAL|FATAL)\b')
+GOTIME = re.compile(r'(?i)^(?:(?:ts|timestamp)=\S+|time="[^"]+"|time=\S+)\s+level=(?P<app_level>TRACE|DEBUG|INFO|NOTICE|WARN|WARNING|ERROR|CRITICAL|FATAL)\b')
 GOLEVEL = re.compile(r'(?i)^level=(?P<app_level>TRACE|DEBUG|INFO|NOTICE|WARN|WARNING|ERROR|CRITICAL|FATAL)\b')
 SEVERITY_CASES = [
     ('2026-10-30 09:18:59.912 ERROR (MainThread) [homeassistant.components.rest.data] Error fetching data', 'error', 'error'),
@@ -203,3 +203,27 @@ for line, initial, expected in ANSI_TESTS:
         assert not PYLOG.search(line), 'raw ANSI line should fail the anchored regex'
         assert '\x1b' not in cleaned
 print('Passed v0.1.7 ANSI-prefixed Supervisor, warning, error and fallback fixtures.')
+
+
+# v0.1.8: OpenCode uses timestamp=... level=INFO; journal priority is often 3.
+# Use the application prefix even when journald classifies stdout as error.
+OPENCODE_CASES = [
+    (
+        'timestamp=2026-10-30T18:45:07.720Z level=INFO run=1678d4f8 message=event event.id=evt_18e214608002Xo2FbgUtHICRfZ event.type=command.updated event.location.directory=/data event.location.workspaceID=undefined event.data={}',
+        'error', 'info',
+    ),
+    ('timestamp=2026-10-30T18:45:07.720Z level=WARN run=1678d4f8 message=retry', 'error', 'warning'),
+    ('timestamp=2026-10-30T18:45:07.720Z level=ERROR run=1678d4f8 message=failed', 'info', 'error'),
+    ('timestamp=2026-10-30T18:45:07.720Z message=event event.data=level=ERROR', 'info', 'info'),
+    ('event.data={"level":"ERROR"} command.updated', 'info', 'info'),
+]
+for line, journal, expected in OPENCODE_CASES:
+    app_level = None
+    for expression in (PYLOG, GOTIME, GOLEVEL):
+        if matched := expression.search(line):
+            app_level = matched['app_level'].lower()
+    actual = ('warning' if app_level == 'warn' else app_level) or journal
+    assert actual == expected, (line, actual, expected)
+assert '(?:ts|timestamp)=' in GOTIME.pattern
+assert 'stage.decolorize {}' in journal_normalizer
+print('Passed v0.1.8 OpenCode timestamp= severity overrides and embedded-word fallbacks.')

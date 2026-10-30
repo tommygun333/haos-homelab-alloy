@@ -175,9 +175,10 @@ loki.process "journal_normalize_metadata" {
   stage.regex {
     expression = `(?i)^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?(?:Z|[+-]\d{2}:\d{2})?\s+(?P<app_level>TRACE|DEBUG|INFO|NOTICE|WARN|WARNING|ERROR|CRITICAL|FATAL)\b`
   }
-  // Go loggers: ts=2026-... level=info ... OR time="2026-..." level=error ...
+  // Structured Go/JS loggers: ts=..., time=..., or timestamp=... level=INFO.
+  // OpenCode uses timestamp=2026-... level=INFO; journal priority can be error.
   stage.regex {
-    expression = `(?i)^(?:ts=\S+|time="[^"]+"|time=\S+)\s+level=(?P<app_level>TRACE|DEBUG|INFO|NOTICE|WARN|WARNING|ERROR|CRITICAL|FATAL)\b`
+    expression = `(?i)^(?:(?:ts|timestamp)=\S+|time="[^"]+"|time=\S+)\s+level=(?P<app_level>TRACE|DEBUG|INFO|NOTICE|WARN|WARNING|ERROR|CRITICAL|FATAL)\b`
   }
   // Some Go applications start a line directly with level=...
   stage.regex {

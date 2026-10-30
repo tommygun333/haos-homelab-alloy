@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.8 — Normalize OpenCode timestamp= application levels
+
+- Recognize anchored `timestamp=... level=INFO/WARN/ERROR` log headers used by the HAOS OpenCode app alongside the existing `ts=...` and `time=...` forms.
+- Prefer the explicit application severity over the sometimes incorrect Docker journal priority, retaining `journal_priority_original`, `journal_priority_numeric`, and `severity_origin` metadata.
+- Add the actual OpenCode INFO event and fallback/negative examples to Python fixtures and the pinned Docker Alloy runtime smoke test.
+- No changes to the working ANSI decolorization, HA Core file/traceback pipeline, Loki destination, or Prometheus counters.
+
 ## 0.1.7 — Strip ANSI colors before journal severity classification
 
 - **Fix:** HAOS Supervisor emits terminal-colored journal messages beginning with an ANSI sequence (for example `\x1b[32m`) before the timestamp. Existing anchored `stage.regex` rules could not match, causing `INFO` and `WARNING` to be counted as journal-priority `error`.

@@ -54,6 +54,17 @@ local.file_match "test" {
       level             = "info",
       severity_origin   = "journal_priority",
     },
+    {
+      __path__          = "/fixtures/opencode.log",
+      host              = "homeassistant",
+      source            = "journal",
+      unit              = "docker.service",
+      syslog_identifier = "app_f5588468_ha_opencode",
+      fixture           = "opencode",
+      severity          = "error",
+      level             = "error",
+      severity_origin   = "journal_priority",
+    },
   ]
   sync_period = "1s"
 }
@@ -90,8 +101,16 @@ SUPERVISOR = (
     'This message mentions error but is missing an application log level\n'
 )
 DOCKER = 'time="2026-10-30T09:27:40.378407071+01:00" level=error msg="Failed to query external DNS"\n'
+OPENCODE = (
+    'timestamp=2026-10-30T18:45:07.720Z level=INFO run=1678d4f8 message=event event.id=evt_18e214608002Xo2FbgUtHICRfZ event.type=command.updated event.location.directory=/data event.location.workspaceID=undefined event.data={}\n'
+    'timestamp=2026-10-30T18:46:07.720Z level=WARN run=1678d4f8 message=retry\n'
+    'timestamp=2026-10-30T18:47:07.720Z level=ERROR run=1678d4f8 message=failed\n'
+    'timestamp=2026-10-30T18:48:07.720Z message=event event.data=level=ERROR\n'
+)
 EXPECTED = {('supervisor', 'info'): 1, ('supervisor', 'warning'): 1,
-            ('supervisor', 'error'): 2, ('docker', 'error'): 1}
+            ('supervisor', 'error'): 2, ('docker', 'error'): 1,
+            ('opencode', 'info'): 1, ('opencode', 'warning'): 1,
+            ('opencode', 'error'): 2}
 
 
 def metrics(url: str) -> dict[tuple[str, str], float]:
@@ -116,6 +135,7 @@ def run() -> None:
         (d/'config.alloy').write_text(CONFIG)
         (d/'supervisor.log').write_text('')
         (d/'docker.log').write_text('')
+        (d/'opencode.log').write_text('')
         with socket.socket() as s:
             s.bind(('127.0.0.1', 0))
             port = s.getsockname()[1]
@@ -147,6 +167,7 @@ def run() -> None:
             time.sleep(2)
             with (d/'supervisor.log').open('a') as f: f.write(SUPERVISOR)
             with (d/'docker.log').open('a') as f: f.write(DOCKER)
+            with (d/'opencode.log').open('a') as f: f.write(OPENCODE)
             until = time.monotonic()+40
             found = {}
             while time.monotonic()<until:
@@ -157,7 +178,7 @@ def run() -> None:
                 time.sleep(.5)
             assert all(found.get(k) == v for k,v in EXPECTED.items()), \
                 f'Expected {EXPECTED}, got {found}'
-            print('PASS: real Alloy runtime normalized ANSI INFO/WARNING/ERROR, Go error and no-prefix fallback:', found)
+            print('PASS: real Alloy runtime normalized ANSI, OpenCode timestamp=INFO/WARN/ERROR, and no-prefix fallback:', found)
         except Exception:
             print('--- Alloy logs ---', flush=True)
             subprocess.run(['docker','logs',container],check=False)
