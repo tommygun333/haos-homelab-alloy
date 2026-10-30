@@ -75,7 +75,7 @@ assert not REJECT_CORE.fullmatch('hassio_supervisor')
 assert not REJECT_CORE.fullmatch('app_9f46d388_homelab_alloy')
 assert not REJECT_CORE.fullmatch('dockerd')
 
-assert 'version: "0.1.6"' in app
+assert 'version: "0.1.7"' in app
 assert 'path          = "/var/log/journal"' in alloy
 assert 'source_labels = ["__journal_syslog_identifier"]\n    regex         = "homeassistant"\n    action        = "drop"' in alloy
 assert alloy.index('action        = "drop"') < alloy.index('target_label  = "unit"')
@@ -176,3 +176,30 @@ assert 'journal_priority_original = ""' in journal_normalizer
 print('Passed Supervisor INFO/WARNING, dockerd ERROR, journal fallback and unguarded processing tests.')
 
 print('Passed Core-file fixtures, journal severity overrides, and pipeline invariants.')
+
+# v0.1.7: real Supervisor messages begin with ANSI color escapes,
+# e.g. ESC[32m timestamp INFO (...), so the regex cannot match until stripped.
+ANSI = re.compile(r'\x1b\[[0-9;]*m')
+ANSI_TESTS = [
+    ("\x1b[32m2026-10-30 12:27:23.018+01:00 INFO (MainThread) [supervisor.store.git] Update app\x1b[0m", "error", "info"),
+    ("\x1b[33m2026-10-30 11:57:36.397+01:00 WARNING (sentry-sdk.BackgroundWorker) [urllib3.connectionpool] Retrying\x1b[0m", "error", "warning"),
+    ("\x1b[31m2026-10-30 09:18:59.912+01:00 ERROR (MainThread) [supervisor.docker] Actual failure\x1b[0m", "info", "error"),
+    ("time=\"2026-10-30T09:27:40.378407071+01:00\" level=error msg=\"Failed to query external DNS\"", "info", "error"),
+    ("ordinary message mentioning error inside its body", "info", "info"),
+]
+position_decolorize=alloy.index('  stage.decolorize {}',alloy.index('loki.process "journal_normalize_metadata"'))
+position_regex=alloy.index('  stage.regex {',alloy.index('loki.process "journal_normalize_metadata"'))
+assert position_decolorize<position_regex, 'decolorize must run before journal severity regex'
+assert alloy.count('  stage.decolorize {}') == 1
+for line, initial, expected in ANSI_TESTS:
+    cleaned=ANSI.sub('',line)
+    app_level=None
+    for pattern in (PYLOG,GOTIME,GOLEVEL):
+        if match:=pattern.search(cleaned):
+            app_level=match['app_level'].lower()
+    actual=('warning' if app_level=='warn' else app_level) or initial
+    assert actual==expected,(repr(line),actual,expected)
+    if line.startswith('\x1b'):
+        assert not PYLOG.search(line), 'raw ANSI line should fail the anchored regex'
+        assert '\x1b' not in cleaned
+print('Passed v0.1.7 ANSI-prefixed Supervisor, warning, error and fallback fixtures.')

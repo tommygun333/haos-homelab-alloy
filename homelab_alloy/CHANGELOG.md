@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.7 — Strip ANSI colors before journal severity classification
+
+- **Fix:** HAOS Supervisor emits terminal-colored journal messages beginning with an ANSI sequence (for example `\x1b[32m`) before the timestamp. Existing anchored `stage.regex` rules could not match, causing `INFO` and `WARNING` to be counted as journal-priority `error`.
+- Use official Alloy `stage.decolorize {}` at the start of the journal normalization processor, ahead of all message-prefix severity extractors; preserve the journald-priority fallback and raw journal priority metadata.
+- Add actual ANSI-prefixed Supervisor/urllib3 fixtures and Docker-based runtime regression validation in GitHub Actions.
+- Leave native Home Assistant Core file collection and its traceback merging unchanged.
+
+
 ## 0.1.6 — Fix journal application severity overrides for Supervisor and others
 
 - Remove the `unit="docker.service"` `stage.match` wrapper around the anchored message-prefix severity extractors, which failed to apply to observed Supervisor INFO and WARNING entries despite the indexed unit label.

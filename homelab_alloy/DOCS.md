@@ -189,3 +189,17 @@ In Grafana Explore, inspect a fresh Supervisor message using:
 ```logql
 {host="homeassistant",source="journal",syslog_identifier="hassio_supervisor"}
 ```
+
+## v0.1.7 — ANSI-colored journal lines
+
+Home Assistant Supervisor's journal stdout can start with ANSI colors, e.g. `ESC[32m2026-10-30 12:27:23.018+01:00 INFO ...`. The raw bytes were confirmed from Loki using `od -An -tx1c` (`1b 5b 33 32 6d`). Prior to v0.1.7, anchored severity extractors did not match these lines, despite the plain text looking correct in Grafana. `severity_origin` consequently remained `journal_priority`, which was often `error` (3).
+
+The journal pipeline now runs Alloy's `stage.decolorize {}` **before** extracting message-level severity. `INFO` and `WARNING` will be indexed correctly as `info` and `warning`; other streams with Go-style log prefixes remain supported. Messages without a recognized prefix still fall back to the original journal priority, preserved in `journal_priority_original` and `journal_priority_numeric` metadata. This intentionally removes terminal ANSI colors from newly shipped journal log message text. Home Assistant Core's file pipeline is unchanged.
+
+Check newly ingested entries, not old data:
+
+```logql
+{host="homeassistant",syslog_identifier="hassio_supervisor",source="journal"}
+```
+
+A fixed record has `severity_origin=message_prefix`, `severity=info` or `warning`, and retained `journal_priority_numeric=3` when applicable. CI includes a Docker smoke test against the pinned Alloy image (normalization + metrics) in addition to configuration validation.

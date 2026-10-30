@@ -26,5 +26,7 @@ jobs:
             -v "$PWD/homelab_alloy/config.alloy:/etc/alloy/config.alloy:ro" \
             grafana/alloy:v1.20.1 \
             validate /etc/alloy/config.alloy
+      - name: Test severity against real Alloy runtime
+        run: python scripts/test_alloy_runtime.py
       - name: Check app Dockerfile builds
         run: docker build -t haos-homelab-alloy:test homelab_alloy

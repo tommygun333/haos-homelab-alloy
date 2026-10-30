@@ -166,6 +166,11 @@ loki.process "journal_normalize_metadata" {
   // When no recognized prefix exists, preserve journal priority unchanged.
   // Do not put the extractors inside a stage.match: source labels cannot be
   // assumed to be present or reliable at this processing boundary.
+  // Supervisor and other container services include terminal ANSI colors
+  // (for example ESC[32m before the timestamp). Strip ANSI before anchored
+  // regexes to prevent false journal-priority fallback and miscounted errors.
+  stage.decolorize {}
+
   // HA Core / Supervisor: 2026-10-30 09:12:22.883+01:00 INFO (...)
   stage.regex {
     expression = `(?i)^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?(?:Z|[+-]\d{2}:\d{2})?\s+(?P<app_level>TRACE|DEBUG|INFO|NOTICE|WARN|WARNING|ERROR|CRITICAL|FATAL)\b`
