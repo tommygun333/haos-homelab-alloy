@@ -1,0 +1,18 @@
+name: "Homelab Grafana Alloy"
+version: "0.1.0"
+slug: "homelab_alloy"
+description: "HAOS journal to Loki with Prometheus counters for the homelab"
+url: "https://github.com/tommygun333/haos-homelab-alloy"
+arch:
+  - amd64
+init: false
+startup: services
+boot: auto
+stage: experimental
+journald: true
+ports:
+  12345/tcp: 12345
+ports_description:
+  12345/tcp: "Alloy metrics and pipeline inspector (trusted LAN only)"
+webui: "http://[HOST]:[PORT:12345]/"
+watchdog: "http://[HOST]:[PORT:12345]/-/ready"

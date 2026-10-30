@@ -1,0 +1,253 @@
+// HAOS collector for the established homelab Alloy/Loki/Prometheus pipeline.
+// Labels are stable across restarts; adjust host only before the first ingest.
+logging {
+  level  = "info"
+  format = "logfmt"
+}
+
+loki.write "central" {
+  endpoint {
+    url = "http://192.168.1.13:3100/loki/api/v1/push"
+  }
+}
+
+// BEGIN JOURNAL NORMALIZATION V1
+// No message-body parsing. Keep legacy unit/transport/program labels and
+// preserve Grafana v1.9's 'level' while adding canonical 'severity'.
+loki.relabel "journal" {
+  forward_to = []
+
+  rule {
+    source_labels = ["__journal__systemd_unit"]
+    regex         = "(.+)"
+    target_label  = "unit"
+  }
+  rule {
+    source_labels = ["__journal_syslog_identifier"]
+    regex         = "(.+)"
+    target_label  = "syslog_identifier"
+  }
+  rule {
+    source_labels = ["__journal__transport"]
+    regex         = "(.+)"
+    target_label  = "transport"
+  }
+  rule {
+    source_labels = ["__journal__systemd_unit"]
+    regex         = "(.+)"
+    target_label  = "service_name"
+  }
+  // Entries without a systemd unit fall back to the program name.
+  rule {
+    source_labels = ["service_name", "__journal_syslog_identifier"]
+    separator     = ";"
+    regex         = "^;(.+)$"
+    replacement   = "$1"
+    target_label  = "service_name"
+  }
+  // Unknown is explicit when journald supplies no valid PRIORITY keyword.
+  rule {
+    source_labels = ["source"]
+    regex         = "journal"
+    replacement   = "unknown"
+    target_label  = "severity"
+  }
+  rule {
+    source_labels = ["__journal_priority_keyword"]
+    regex         = "(.+)"
+    target_label  = "severity"
+  }
+  // Normalize native aliases; the remaining known priorities already match.
+  rule {
+    source_labels = ["severity"]
+    regex         = "(?i)emerg|emergency|0"
+    replacement   = "emergency"
+    target_label  = "severity"
+  }
+  rule {
+    source_labels = ["severity"]
+    regex         = "(?i)crit|critical|2"
+    replacement   = "critical"
+    target_label  = "severity"
+  }
+  rule {
+    source_labels = ["severity"]
+    regex         = "(?i)err|error|3"
+    replacement   = "error"
+    target_label  = "severity"
+  }
+  rule {
+    source_labels = ["severity"]
+    regex         = "(?i)warn|warning|4"
+    replacement   = "warning"
+    target_label  = "severity"
+  }
+  rule {
+    source_labels = ["severity"]
+    regex         = "(?i)info|information|informational|6"
+    replacement   = "info"
+    target_label  = "severity"
+  }
+  rule {
+    source_labels = ["severity"]
+    regex         = "(?i)notice|5"
+    replacement   = "notice"
+    target_label  = "severity"
+  }
+  rule {
+    source_labels = ["severity"]
+    regex         = "(?i)debug|7"
+    replacement   = "debug"
+    target_label  = "severity"
+  }
+  rule {
+    source_labels = ["severity"]
+    regex         = "(?i)alert|1"
+    replacement   = "alert"
+    target_label  = "severity"
+  }
+  // The existing Grafana canonical template uses level before other fields.
+  rule {
+    source_labels = ["severity"]
+    regex         = "(.+)"
+    target_label  = "level"
+  }
+  // Preserve provenance as structured metadata, not new indexed dimensions.
+  rule {
+    source_labels = ["__journal_priority_keyword"]
+    regex         = "(.+)"
+    target_label  = "journal_priority_original"
+  }
+  rule {
+    source_labels = ["__journal_priority"]
+    regex         = "(.+)"
+    target_label  = "journal_priority_numeric"
+  }
+  rule {
+    source_labels = ["source"]
+    regex         = "journal"
+    replacement   = "journal_priority"
+    target_label  = "severity_origin"
+  }
+}
+
+loki.process "journal_normalize_metadata" {
+  forward_to = [loki.write.central.receiver, loki.process.severity_counters.receiver, loki.process.service_counters.receiver]
+  stage.structured_metadata {
+    values = {
+      journal_priority_original = "",
+      journal_priority_numeric  = "",
+      severity_origin           = "",
+    }
+  }
+}
+// END JOURNAL NORMALIZATION V1
+
+// HAOS Supervisor mounts the host journal read-only via journald: true.
+// Alloy auto-discovers /var/log/journal and /run/log/journal when path is unset.
+// HA Core, Supervisor, add-on apps and host journal records share this source.
+loki.source.journal "system" {
+  max_age       = "10m"
+  labels        = { host = "homeassistant", source = "journal" }
+  relabel_rules = loki.relabel.journal.rules
+  forward_to    = [loki.process.journal_normalize_metadata.receiver]
+}
+
+// BEGIN HOMELAB INGESTION COUNTERS V1
+// Counter metric family: homelab_log_events_total{host, severity_group}
+// severity_group = high | warning | unknown. Informational logs are ignored.
+// This independent branch emits metrics only and NEVER modifies/drops Loki logs.
+loki.process "severity_counters" {
+  forward_to = []
+
+  stage.match {
+    selector = `{severity=~"emergency|alert|critical|fatal|error"}`
+    stage.static_labels {
+      values = { severity_group = "high" }
+    }
+  }
+  stage.match {
+    selector = `{severity="warning"}`
+    stage.static_labels {
+      values = { severity_group = "warning" }
+    }
+  }
+  stage.match {
+    selector = `{severity="unknown"}`
+    stage.static_labels {
+      values = { severity_group = "unknown" }
+    }
+  }
+
+  // Unclassified INFO, DEBUG, etc. must not increment any counter.
+  stage.match {
+    selector = `{severity_group=~"high|warning|unknown"}`
+    stage.label_keep {
+      values = ["host", "severity_group"]
+    }
+    stage.metrics {
+      metric.counter {
+        name              = "events_total"
+        prefix            = "homelab_log_"
+        description       = "Normalized log entries by host and severity group"
+        match_all         = true
+        action            = "inc"
+        max_idle_duration = "30h"
+      }
+    }
+  }
+}
+// END HOMELAB INGESTION COUNTERS V1
+
+// BEGIN HOMELAB SERVICE COUNTERS V2
+// Metric: homelab_log_service_events_total{host,source,service_name,severity_group}
+// Independent metrics-only sink; the Loki branch and legacy counters remain unchanged.
+loki.process "service_counters" {
+  forward_to = []
+
+  // The extracted map begins with incoming log labels. Prefer stable unit
+  // or program labels, then Docker service_name, and
+  // finally syslog_identifier. Transient systemd scopes are collapsed.
+  // Never derive service labels from raw message contents, PID or container ID.
+  stage.template {
+    source = "metric_service_name"
+    template = `{{- if and (hasKey . "unit") (regexMatch "^(session-[0-9]+|docker-[0-9a-f]{64}|libpod-[0-9a-f]{64}|run-[A-Za-z0-9_-]+)[.]scope$" (printf "%v" .unit)) -}}systemd/transient{{- else if and (hasKey . "unit") (regexMatch "^[A-Za-z0-9_./@:-]{1,96}$" (printf "%v" .unit)) -}}{{ .unit }}{{- else if and (hasKey . "program") (regexMatch "^[A-Za-z0-9_.@:-]{1,64}$" (printf "%v" .program)) -}}{{ .program }}{{- else if and (hasKey . "service_name") (regexMatch "^[A-Za-z0-9_./@:-]{1,96}$" (printf "%v" .service_name)) -}}{{ .service_name }}{{- else if and (hasKey . "syslog_identifier") (regexMatch "^[A-Za-z0-9_.@:-]{1,64}$" (printf "%v" .syslog_identifier)) -}}{{ .syslog_identifier }}{{- else if and (hasKey . "source") (eq (printf "%v" .source) "kodi") -}}kodi{{- else -}}_unattributed{{- end -}}`
+  }
+  stage.labels {
+    values = { service_name = "metric_service_name" }
+  }
+
+  // Default unknown covers explicit unknown and unexpected/missing severities.
+  stage.static_labels {
+    values = { severity_group = "unknown" }
+  }
+  stage.match {
+    selector = `{severity=~"emergency|alert|critical|fatal|error"}`
+    stage.static_labels { values = { severity_group = "high" } }
+  }
+  stage.match {
+    selector = `{severity="warning"}`
+    stage.static_labels { values = { severity_group = "warning" } }
+  }
+  stage.match {
+    selector = `{severity=~"notice|info|debug|trace"}`
+    stage.static_labels { values = { severity_group = "normal" } }
+  }
+
+  // Keep only four finite/controlled metric dimensions.
+  stage.label_keep {
+    values = ["host", "source", "service_name", "severity_group"]
+  }
+  stage.metrics {
+    metric.counter {
+      name              = "service_events_total"
+      prefix            = "homelab_log_"
+      description       = "Ingested log lines by originating host, source, service and severity group"
+      match_all         = true
+      action            = "inc"
+      max_idle_duration = "30h"
+    }
+  }
+}
+// END HOMELAB SERVICE COUNTERS V2
+

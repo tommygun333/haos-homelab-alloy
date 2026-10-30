@@ -1,0 +1,28 @@
+name: Validate HAOS Alloy app
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Check repository and app metadata
+        run: |
+          python -m pip install --disable-pip-version-check pyyaml
+          python scripts/check_repo.py
+      - name: Validate Alloy configuration with pinned Alloy
+        run: |
+          docker run --rm \
+            -v "$PWD/homelab_alloy/config.alloy:/etc/alloy/config.alloy:ro" \
+            grafana/alloy:v1.20.1 \
+            validate /etc/alloy/config.alloy
+      - name: Check app Dockerfile builds
+        run: docker build -t haos-homelab-alloy:test homelab_alloy
