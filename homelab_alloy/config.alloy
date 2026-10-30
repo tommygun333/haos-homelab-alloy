@@ -158,36 +158,36 @@ loki.relabel "journal" {
 loki.process "journal_normalize_metadata" {
   forward_to = [loki.write.central.receiver, loki.process.severity_counters.receiver, loki.process.service_counters.receiver]
 
-  // Docker's journal priority can disagree in EITHER direction with the
-  // application's message (INFO logged as priority 3; ERROR as priority 6).
-  // Only trust anchored, standard message-level prefixes on docker.service.
-  // For everything else, retain journald's normalized severity.
-  stage.match {
-    selector = `{unit="docker.service"}`
-
-    // HA Core / Supervisor: 2026-10-30 09:12:22.883+01:00 INFO (...)
-    stage.regex {
-      expression = `(?i)^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?(?:Z|[+-]\d{2}:\d{2})?\s+(?P<app_level>TRACE|DEBUG|INFO|NOTICE|WARN|WARNING|ERROR|CRITICAL|FATAL)\b`
-    }
-    // Go loggers: ts=2026-... level=info ... OR time="2026-..." level=error ...
-    stage.regex {
-      expression = `(?i)^(?:ts=\S+|time="[^"]+"|time=\S+)\s+level=(?P<app_level>TRACE|DEBUG|INFO|NOTICE|WARN|WARNING|ERROR|CRITICAL|FATAL)\b`
-    }
-    // Some Go applications start a line directly with level=...
-    stage.regex {
-      expression = `(?i)^level=(?P<app_level>TRACE|DEBUG|INFO|NOTICE|WARN|WARNING|ERROR|CRITICAL|FATAL)\b`
-    }
-    stage.template {
-      source = "effective_severity"
-      template = `{{- if .app_level -}}{{- $lvl := ToLower .app_level -}}{{- if eq $lvl "warn" -}}warning{{- else -}}{{ $lvl }}{{- end -}}{{- else -}}{{ .severity }}{{- end -}}`
-    }
-    stage.template {
-      source = "severity_origin"
-      template = `{{- if .app_level -}}message_prefix{{- else -}}{{ .severity_origin }}{{- end -}}`
-    }
-    stage.labels {
-      values = { severity = "effective_severity", level = "effective_severity" }
-    }
+  // The journal PRIORITY can disagree with the application's actual level.
+  // Prefer an explicit application-level PREFIX regardless of systemd unit:
+  // e.g. Supervisor INFO/WARNING under docker.service, or dockerd level=error
+  // under journal priority info. The patterns are strictly start-anchored,
+  // so words like "error" in the body cannot change severity.
+  // When no recognized prefix exists, preserve journal priority unchanged.
+  // Do not put the extractors inside a stage.match: source labels cannot be
+  // assumed to be present or reliable at this processing boundary.
+  // HA Core / Supervisor: 2026-10-30 09:12:22.883+01:00 INFO (...)
+  stage.regex {
+    expression = `(?i)^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?(?:Z|[+-]\d{2}:\d{2})?\s+(?P<app_level>TRACE|DEBUG|INFO|NOTICE|WARN|WARNING|ERROR|CRITICAL|FATAL)\b`
+  }
+  // Go loggers: ts=2026-... level=info ... OR time="2026-..." level=error ...
+  stage.regex {
+    expression = `(?i)^(?:ts=\S+|time="[^"]+"|time=\S+)\s+level=(?P<app_level>TRACE|DEBUG|INFO|NOTICE|WARN|WARNING|ERROR|CRITICAL|FATAL)\b`
+  }
+  // Some Go applications start a line directly with level=...
+  stage.regex {
+    expression = `(?i)^level=(?P<app_level>TRACE|DEBUG|INFO|NOTICE|WARN|WARNING|ERROR|CRITICAL|FATAL)\b`
+  }
+  stage.template {
+    source = "effective_severity"
+    template = `{{- if .app_level -}}{{- $lvl := ToLower .app_level -}}{{- if eq $lvl "warn" -}}warning{{- else -}}{{ $lvl }}{{- end -}}{{- else -}}{{ .severity }}{{- end -}}`
+  }
+  stage.template {
+    source = "severity_origin"
+    template = `{{- if .app_level -}}message_prefix{{- else -}}{{ .severity_origin }}{{- end -}}`
+  }
+  stage.labels {
+    values = { severity = "effective_severity", level = "effective_severity" }
   }
 
   stage.structured_metadata {

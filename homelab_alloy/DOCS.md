@@ -158,3 +158,34 @@ unchanged. No additional Core rebuild is needed; update the Alloy app only.
 Validation must include a fresh traceback produced **after** the v0.1.5
 update. Historical split entries retain their old labels in Loki. Entries
 without an explicit offset are ambiguous at the autumn DST clock change.
+
+
+## v0.1.6 — Journal message severity wins over journald priority
+
+Journald may assign a priority that differs from the actual application
+message. This was observed on HAOS for Supervisor:
+
+- `2026-10-30 11:54:31.255+01:00 INFO (MainThread) [supervisor.resolution.fixup] ...`
+  had journal priority `error`; now indexed as `severity=info`.
+- `2026-10-30 11:57:36.397+01:00 WARNING (sentry-sdk.BackgroundWorker) ...`
+  had journal priority `error`; now indexed as `severity=warning`.
+- A `dockerd` message with a leading `time=... level=error` and journal priority
+  `info` becomes indexed `severity=error`.
+
+The explicit prefix extractors run on *all journal messages* without a
+`unit=docker.service` match wrapper, because relying on that conditional did
+not work in the observed deployment. The regexes remain anchored to known
+Python/Go logging headers, so arbitrary severity words inside the message
+body do not affect classification. Missing or unrecognized prefixes retain
+normalized journal priority. `severity_origin=message_prefix` indicates a
+successful override; `severity_origin=journal_priority` indicates fallback.
+Original PRIORITY fields remain as structured metadata.
+
+Only events ingested after the app update use the new mapping. The Core log
+file source (v0.1.5) and split-journal Core exclusion are unchanged.
+
+In Grafana Explore, inspect a fresh Supervisor message using:
+
+```logql
+{host="homeassistant",source="journal",syslog_identifier="hassio_supervisor"}
+```

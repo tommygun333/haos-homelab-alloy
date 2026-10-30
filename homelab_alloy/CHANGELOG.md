@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.6 — Fix journal application severity overrides for Supervisor and others
+
+- Remove the `unit="docker.service"` `stage.match` wrapper around the anchored message-prefix severity extractors, which failed to apply to observed Supervisor INFO and WARNING entries despite the indexed unit label.
+- Apply strictly anchored application-level log patterns to all journal records, falling back to journald PRIORITY where no explicit application prefix matches.
+- Preserve raw `journal_priority_numeric`, `journal_priority_original`, and the `severity_origin` structured metadata.
+- Continue to exclude Home Assistant Core journal copies and collect Core exceptions as intact records from the native log file. No changes to metric families or scrape configuration.
+- Add exact observed Supervisor INFO/WARNING fixtures plus an assertion that the journal override is not silently nested inside another match stage.
+
+
 ## 0.1.5 — Fix Core log header detection and traceback grouping
 
 - Accept timezone-less HAOS log-file headers (observed `2026-10-30 10:47:46.401 WARNING`) and offset-bearing headers.

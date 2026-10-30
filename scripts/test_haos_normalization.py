@@ -75,7 +75,7 @@ assert not REJECT_CORE.fullmatch('hassio_supervisor')
 assert not REJECT_CORE.fullmatch('app_9f46d388_homelab_alloy')
 assert not REJECT_CORE.fullmatch('dockerd')
 
-assert 'version: "0.1.5"' in app
+assert 'version: "0.1.6"' in app
 assert 'path          = "/var/log/journal"' in alloy
 assert 'source_labels = ["__journal_syslog_identifier"]\n    regex         = "homeassistant"\n    action        = "drop"' in alloy
 assert alloy.index('action        = "drop"') < alloy.index('target_label  = "unit"')
@@ -127,4 +127,52 @@ for msg, journal, expected in SEVERITY_CASES:
 for pattern in (PYLOG, GOTIME, GOLEVEL):
     assert pattern.pattern in alloy, pattern.pattern
 
-print('Passed actual HAOS timestamp/no-offset fixture, timezone-aware timestamp, traceback grouping, severity and pipeline contracts.')
+
+# v0.1.6: These are the precise Supervisor journal records that were still
+# wrongly labeled as error in v0.1.5. All application prefix extractors must
+# execute for any journal source and must not depend on the unit label.
+SUPERVISOR_CASES = [
+    (
+        '2026-10-30 11:54:31.255+01:00 INFO (MainThread) [supervisor.resolution.fixup] System autofix complete',
+        'error', 'info',
+    ),
+    (
+        '2026-10-30 11:57:36.397+01:00 WARNING (sentry-sdk.BackgroundWorker) [urllib3.connectionpool] Retrying after connection broken',
+        'error', 'warning',
+    ),
+    (
+        'time="2026-10-30T09:27:40.378407071+01:00" level=error msg="[resolver] failed to query external DNS server"',
+        'info', 'error',
+    ),
+    (
+        '2026-10-30 09:18:59.912 ERROR (MainThread) [homeassistant.components.rest.data] Cannot connect',
+        'error', 'error',
+    ),
+    (
+        'This info line mentions error and WARNING in body only',
+        'info', 'info',
+    ),
+]
+for msg, journal, expected in SUPERVISOR_CASES:
+    level = None
+    for pattern in (PYLOG, GOTIME, GOLEVEL):
+        if m := pattern.search(msg):
+            level = m['app_level'].lower()
+    actual = ('warning' if level == 'warn' else level) or journal
+    assert actual == expected, (msg, actual, expected)
+
+journal_normalizer = alloy.split('loki.process "journal_normalize_metadata" {', 1)[1].split('// END JOURNAL NORMALIZATION V2', 1)[0]
+# This assertion would have caught the previous guarded configuration, even
+# though its regexes passed the old Python fixtures.
+assert 'stage.match {' not in journal_normalizer, 'Severity override is incorrectly guarded by stage.match'
+assert 'selector = `{unit="docker.service"}`' not in journal_normalizer
+assert journal_normalizer.count('stage.regex {') == 3
+assert journal_normalizer.count('source = "effective_severity"') == 1
+assert journal_normalizer.count('stage.labels {') == 1
+assert 'source = "severity_origin"' in journal_normalizer
+assert 'severity_origin           = ""' in journal_normalizer
+assert 'journal_priority_original = ""' in journal_normalizer
+
+print('Passed Supervisor INFO/WARNING, dockerd ERROR, journal fallback and unguarded processing tests.')
+
+print('Passed Core-file fixtures, journal severity overrides, and pipeline invariants.')
