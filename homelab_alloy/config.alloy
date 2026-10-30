@@ -147,6 +147,7 @@ loki.process "journal_normalize_metadata" {
 // Alloy auto-discovers /var/log/journal and /run/log/journal when path is unset.
 // HA Core, Supervisor, add-on apps and host journal records share this source.
 loki.source.journal "system" {
+  path          = "/var/log/journal"
   max_age       = "10m"
   labels        = { host = "homeassistant", source = "journal" }
   relabel_rules = loki.relabel.journal.rules
