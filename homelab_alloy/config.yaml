@@ -1,5 +1,5 @@
 name: "Homelab Grafana Alloy"
-version: "0.1.1"
+version: "0.1.2"
 slug: "homelab_alloy"
 description: "HAOS journal to Loki with Prometheus counters for the homelab"
 url: "https://github.com/tommygun333/haos-homelab-alloy"

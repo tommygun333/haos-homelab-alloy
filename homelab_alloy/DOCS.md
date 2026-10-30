@@ -37,3 +37,39 @@ Do not run a second Alloy/Promtail journal reader on the same HAOS machine: repe
 Alloy exposes an unauthenticated debug interface and metrics endpoint on 12345. Permit only trusted LAN/CT107 access. The Docker socket is not mounted; AppArmor/protection mode aren't disabled; the journal is mapped read-only by Supervisor. Raw logs may contain sensitive data; keep Loki restricted too.
 
 The pipeline is built into `config.alloy`, not editable through the app Configuration tab. Source updates require a Git push plus app version bump.
+
+## Docker log severity and traceback handling (v0.1.2)
+
+The host journal sometimes records container stdout/stderr with a priority that
+differs from the application's own level. For `unit="docker.service"`, an
+anchored HA/Python timestamp+level, `ts=... level=...`, `time=... level=...`
+or leading `level=...` takes precedence; otherwise journal priority remains
+authoritative. The original `journal_priority_numeric` and
+`journal_priority_original` are still structured metadata. The metadata
+`severity_origin=message_prefix` indicates a message-level override;
+`journal_priority` indicates the fallback.
+
+Docker journal records use `syslog_identifier` for indexed `service_name`
+when available. The original `unit="docker.service"` stays indexed.
+Existing dashboards and the Loki HA integration continue using `host`,
+`service_name`, `source`, `severity`, and the original metric family names.
+
+Only HA Core records (`syslog_identifier="homeassistant"`) enter the
+multiline processor. It uses the anchored HA timestamp+severity as the
+beginning of an event, allows up to 128 lines, and waits at most 2 seconds
+for continuation lines. Tracebacks interleaved with unrelated messages or
+changing journal labels may still split.
+
+The normalizer runs **after** multiline grouping and **before** the Loki
+writer and both Prometheus counters. This means each merged traceback is
+counted once rather than once per journal line, while the journal reader's
+own `loki_source_journal_target_lines_total` still counts raw lines.
+Historical Loki entries and existing counter samples are not rewritten.
+
+To check recent examples:
+
+```logql
+{host="homeassistant",syslog_identifier="dockerd",severity="error"}
+{host="homeassistant",syslog_identifier="hassio_supervisor",severity="info"}
+{host="homeassistant",syslog_identifier="homeassistant",severity="error"}
+```

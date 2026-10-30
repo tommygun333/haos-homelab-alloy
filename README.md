@@ -98,3 +98,13 @@ GitHub Actions runs a YAML/source contract check and `alloy validate` in the pin
 - The archive and YAML have been statically checked, but the full app image build, Alloy HCL runtime validation and HAOS journal permissions must be verified in GitHub Actions and on the HAOS host.
 
 Useful upstream documentation: [Home Assistant app repositories](https://contributors.home-assistant.io/apps/guides/repository/), [Home Assistant app publishing](https://contributors.home-assistant.io/apps/guides/publishing/), [Grafana Alloy](https://grafana.com/docs/alloy/latest/).
+
+## HAOS severity and traceback improvements (v0.1.2)
+
+Docker-mediated journal priority can disagree with the level inside the
+application log (in either direction). The HAOS Alloy pipeline now trusts
+well-defined leading log severity prefixes for Docker entries, maintains the
+original journal priority in structured metadata, attributes Docker-carried
+logs to their actual `syslog_identifier` service, and groups Home Assistant
+Core Python tracebacks before counting or shipping them. See
+[`homelab_alloy/DOCS.md`](homelab_alloy/DOCS.md).

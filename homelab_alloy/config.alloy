@@ -11,9 +11,9 @@ loki.write "central" {
   }
 }
 
-// BEGIN JOURNAL NORMALIZATION V1
-// No message-body parsing. Keep legacy unit/transport/program labels and
-// preserve Grafana v1.9's 'level' while adding canonical 'severity'.
+// BEGIN JOURNAL NORMALIZATION V2
+// Journal priority supplies the initial severity; restricted message-prefix
+// extraction may override it downstream. Keep the original for diagnostics.
 loki.relabel "journal" {
   forward_to = []
 
@@ -45,6 +45,18 @@ loki.relabel "journal" {
     replacement   = "$1"
     target_label  = "service_name"
   }
+  // Docker forwards many apps through docker.service. Keep the unit label,
+  // but use the actual syslog program as service_name when available.
+  // This prevents HA Core, Supervisor, Alloy and dockerd all appearing as
+  // one docker.service in Loki and per-service Prometheus counters.
+  rule {
+    source_labels = ["unit", "syslog_identifier"]
+    separator     = ";"
+    regex         = "^docker[.]service;([A-Za-z0-9_.@:-]{1,96})$"
+    replacement   = "$1"
+    target_label  = "service_name"
+  }
+
   // Unknown is explicit when journald supplies no valid PRIORITY keyword.
   rule {
     source_labels = ["source"]
@@ -131,8 +143,58 @@ loki.relabel "journal" {
   }
 }
 
+// Home Assistant Core emits Python tracebacks as separate journal MESSAGEs.
+// Restrict grouping to HA Core: non-Core journal entries must never be merged.
+// A new HA timestamp+level starts a block; continuation lines join that block.
+// Each emitted traceback becomes one Loki entry and one service-counter event.
+loki.process "journal_merge_core_tracebacks" {
+  forward_to = [loki.process.journal_normalize_metadata.receiver]
+
+  stage.match {
+    selector = `{syslog_identifier="homeassistant"}`
+    stage.multiline {
+      firstline     = `(?i)^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?(?:Z|[+-]\d{2}:\d{2})?\s+(?:TRACE|DEBUG|INFO|NOTICE|WARN|WARNING|ERROR|CRITICAL|FATAL)\b`
+      max_wait_time = "2s"
+      max_lines     = 128
+    }
+  }
+}
+
 loki.process "journal_normalize_metadata" {
   forward_to = [loki.write.central.receiver, loki.process.severity_counters.receiver, loki.process.service_counters.receiver]
+
+  // Docker's journal priority can disagree in EITHER direction with the
+  // application's message (INFO logged as priority 3; ERROR as priority 6).
+  // Only trust anchored, standard message-level prefixes on docker.service.
+  // For everything else, retain journald's normalized severity.
+  stage.match {
+    selector = `{unit="docker.service"}`
+
+    // HA Core / Supervisor: 2026-10-30 09:12:22.883+01:00 INFO (...)
+    stage.regex {
+      expression = `(?i)^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?(?:Z|[+-]\d{2}:\d{2})?\s+(?P<app_level>TRACE|DEBUG|INFO|NOTICE|WARN|WARNING|ERROR|CRITICAL|FATAL)\b`
+    }
+    // Go loggers: ts=2026-... level=info ... OR time="2026-..." level=error ...
+    stage.regex {
+      expression = `(?i)^(?:ts=\S+|time="[^"]+"|time=\S+)\s+level=(?P<app_level>TRACE|DEBUG|INFO|NOTICE|WARN|WARNING|ERROR|CRITICAL|FATAL)\b`
+    }
+    // Some Go applications start a line directly with level=...
+    stage.regex {
+      expression = `(?i)^level=(?P<app_level>TRACE|DEBUG|INFO|NOTICE|WARN|WARNING|ERROR|CRITICAL|FATAL)\b`
+    }
+    stage.template {
+      source = "effective_severity"
+      template = `{{- if .app_level -}}{{- $lvl := ToLower .app_level -}}{{- if eq $lvl "warn" -}}warning{{- else -}}{{ $lvl }}{{- end -}}{{- else -}}{{ .severity }}{{- end -}}`
+    }
+    stage.template {
+      source = "severity_origin"
+      template = `{{- if .app_level -}}message_prefix{{- else -}}{{ .severity_origin }}{{- end -}}`
+    }
+    stage.labels {
+      values = { severity = "effective_severity", level = "effective_severity" }
+    }
+  }
+
   stage.structured_metadata {
     values = {
       journal_priority_original = "",
@@ -141,17 +203,17 @@ loki.process "journal_normalize_metadata" {
     }
   }
 }
-// END JOURNAL NORMALIZATION V1
+// END JOURNAL NORMALIZATION V2
 
 // HAOS Supervisor mounts the host journal read-only via journald: true.
-// Alloy auto-discovers /var/log/journal and /run/log/journal when path is unset.
+// Explicit path is essential on this HAOS installation; auto-discovery returned 0 lines.
 // HA Core, Supervisor, add-on apps and host journal records share this source.
 loki.source.journal "system" {
   path          = "/var/log/journal"
   max_age       = "10m"
   labels        = { host = "homeassistant", source = "journal" }
   relabel_rules = loki.relabel.journal.rules
-  forward_to    = [loki.process.journal_normalize_metadata.receiver]
+  forward_to    = [loki.process.journal_merge_core_tracebacks.receiver]
 }
 
 // BEGIN HOMELAB INGESTION COUNTERS V1
