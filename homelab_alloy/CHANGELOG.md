@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.4 — Native Home Assistant Core log-file collection
+
+- Collect complete HA Core logging records from the native duplicate log file.
+- Mount the HA config directory read-only; detect active file dynamically.
+- Drop Core's fragmented journal stream before Loki and Prometheus to avoid duplicates.
+- Keep journald for Supervisor, add-ons, host and Docker; preserve normalized severity.
+- Parse HA Core timestamp and severity; combine chained Python tracebacks.
+- Add source-separation and traceback regression tests, and documentation.
+- Upgrade directly from 0.1.2 or 0.1.3; no intermediate deployment required.
+
+
 ## 0.1.2 — HAOS severity, service attribution, traceback grouping
 
 - Prefer anchored application prefixes to unreliable Docker journal priority; preserve raw journal priority metadata.

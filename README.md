@@ -108,3 +108,17 @@ original journal priority in structured metadata, attributes Docker-carried
 logs to their actual `syslog_identifier` service, and groups Home Assistant
 Core Python tracebacks before counting or shipping them. See
 [`homelab_alloy/DOCS.md`](homelab_alloy/DOCS.md).
+
+## Native HA Core log-file pipeline (v0.1.4)
+
+**Supersedes the earlier journal traceback experiments.** The Core log file
+`/homeassistant/home-assistant.log` (read-only `homeassistant_config` mount) is
+the authoritative source for Home Assistant Core. The journal excludes records
+with `syslog_identifier=homeassistant`, preventing duplicated Loki messages and
+Prometheus counts. Supervisor, DNS, apps, Docker and HAOS host logs remain
+collected from `/var/log/journal`.
+
+**Before applying this update** on HAOS, run `ha core options
+--duplicate-log-file=true` and then `ha core rebuild`; verify the file exists
+in the configuration directory. Only then install v0.1.4. Source and scraper
+label contracts are documented in [`homelab_alloy/DOCS.md`](homelab_alloy/DOCS.md).

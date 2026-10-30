@@ -27,4 +27,13 @@ assert 'http://192.168.1.13:3100/loki/api/v1/push' in alloy
 assert 'host = "homeassistant"' in alloy
 assert 'source = "journal"' in alloy
 assert 'severity' in alloy
+
+# v0.1.4: HA Core file and journal access, read-only by default.
+assert {'type': 'homeassistant_config', 'read_only': True} in app.get('map', []), 'Missing read-only Core config mount'
+assert 'loki.source.file "homeassistant_core"' in alloy, 'Missing HA Core file source'
+assert 'local.file_match "homeassistant_core"' in alloy
+assert '/homeassistant/home-assistant.log' in alloy
+assert 'action        = "drop"' in alloy, 'Missing journal Core deduplication'
+assert 'loki.process "journal_merge_core_tracebacks"' not in alloy
+
 print('Repository schema/contract checks passed (Alloy HCL validated by Docker CI).')

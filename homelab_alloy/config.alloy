@@ -17,6 +17,14 @@ loki.write "central" {
 loki.relabel "journal" {
   forward_to = []
 
+  // Core logs are now sourced from the original HA log file. Remove the
+  // split journal copies BEFORE they can reach Loki or any counter.
+  rule {
+    source_labels = ["__journal_syslog_identifier"]
+    regex         = "homeassistant"
+    action        = "drop"
+  }
+
   rule {
     source_labels = ["__journal__systemd_unit"]
     regex         = "(.+)"
@@ -143,22 +151,9 @@ loki.relabel "journal" {
   }
 }
 
-// Home Assistant Core emits Python tracebacks as separate journal MESSAGEs.
-// Restrict grouping to HA Core: non-Core journal entries must never be merged.
-// A new HA timestamp+level starts a block; continuation lines join that block.
-// Each emitted traceback becomes one Loki entry and one service-counter event.
-loki.process "journal_merge_core_tracebacks" {
-  forward_to = [loki.process.journal_normalize_metadata.receiver]
-
-  stage.match {
-    selector = `{syslog_identifier="homeassistant"}`
-    stage.multiline {
-      firstline     = `(?i)^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?(?:Z|[+-]\d{2}:\d{2})?\s+(?:TRACE|DEBUG|INFO|NOTICE|WARN|WARNING|ERROR|CRITICAL|FATAL)\b`
-      max_wait_time = "2s"
-      max_lines     = 128
-    }
-  }
-}
+// Home Assistant Core is read from its complete formatted log-file records.
+// No multiline processing is attempted on the journal; Core journal messages
+// are excluded by the relabel drop rule before Loki and the metrics branches.
 
 loki.process "journal_normalize_metadata" {
   forward_to = [loki.write.central.receiver, loki.process.severity_counters.receiver, loki.process.service_counters.receiver]
@@ -207,14 +202,77 @@ loki.process "journal_normalize_metadata" {
 
 // HAOS Supervisor mounts the host journal read-only via journald: true.
 // Explicit path is essential on this HAOS installation; auto-discovery returned 0 lines.
-// HA Core, Supervisor, add-on apps and host journal records share this source.
+// Supervisor, add-on apps and host services use this journal source.
+// HA Core is filtered here because its original entries come from a file.
 loki.source.journal "system" {
   path          = "/var/log/journal"
   max_age       = "10m"
   labels        = { host = "homeassistant", source = "journal" }
   relabel_rules = loki.relabel.journal.rules
-  forward_to    = [loki.process.journal_merge_core_tracebacks.receiver]
+  forward_to    = [loki.process.journal_normalize_metadata.receiver]
 }
+
+// BEGIN HOME ASSISTANT CORE FILE SOURCE V1
+// Requires the HAOS option --duplicate-log-file=true and a read-only
+// homeassistant_config mount at /homeassistant from Supervisor.
+// The Core log file retains multi-line Python exception text, unlike the
+// line-fragmented journal copies. Only the active file is read, not .old/.1.
+// File discovery allows the app to start before the file exists; the file
+// is picked up when created. No fallback to journal to avoid double counting.
+local.file_match "homeassistant_core" {
+  path_targets = [{
+    __path__          = "/homeassistant/home-assistant.log",
+    host              = "homeassistant",
+    source            = "homeassistant_core",
+    service_name      = "homeassistant",
+    syslog_identifier = "homeassistant",
+  }]
+  sync_period = "5s"
+}
+
+loki.source.file "homeassistant_core" {
+  targets       = local.file_match.homeassistant_core.targets
+  forward_to    = [loki.process.homeassistant_core.receiver]
+  tail_from_end = true
+}
+
+loki.process "homeassistant_core" {
+  forward_to = [loki.write.central.receiver, loki.process.severity_counters.receiver, loki.process.service_counters.receiver]
+
+  // Home Assistant's own formatted record header is the only firstline.
+  // Internal traceback lines, nested tracebacks and chained exceptions
+  // remain part of the same logging event.
+  stage.multiline {
+    firstline     = `^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}[+-]\d{2}:\d{2} (?:DEBUG|INFO|WARNING|ERROR|CRITICAL)\b`
+    max_wait_time = "3s"
+    max_lines     = 512
+  }
+
+  // Parse the original application-level timestamp and severity.
+  stage.regex {
+    expression = `^(?P<ha_timestamp>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}[+-]\d{2}:\d{2}) (?P<app_level>DEBUG|INFO|WARNING|ERROR|CRITICAL)\b`
+  }
+  stage.timestamp {
+    source            = "ha_timestamp"
+    format            = "2006-01-02 15:04:05.000-07:00"
+    action_on_failure = "skip"
+  }
+  stage.template {
+    source   = "effective_severity"
+    template = `{{- if .app_level -}}{{ ToLower .app_level }}{{- else -}}unknown{{- end -}}`
+  }
+  stage.labels {
+    values = { severity = "effective_severity", level = "effective_severity" }
+  }
+  stage.template {
+    source   = "severity_origin"
+    template = `homeassistant_log_file`
+  }
+  stage.structured_metadata {
+    values = { severity_origin = "" }
+  }
+}
+// END HOME ASSISTANT CORE FILE SOURCE V1
 
 // BEGIN HOMELAB INGESTION COUNTERS V1
 // Counter metric family: homelab_log_events_total{host, severity_group}

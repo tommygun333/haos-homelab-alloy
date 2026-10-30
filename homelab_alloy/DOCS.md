@@ -73,3 +73,69 @@ To check recent examples:
 {host="homeassistant",syslog_identifier="hassio_supervisor",severity="info"}
 {host="homeassistant",syslog_identifier="homeassistant",severity="error"}
 ```
+
+
+## v0.1.4 — Native Home Assistant Core log-file source (current)
+
+This section **replaces** the v0.1.2 journal multiline recommendation above.
+
+### Required preparation, in this order
+
+1. Before updating Alloy, use an HAOS terminal: `ha core options --duplicate-log-file=true`
+2. Run `ha core rebuild` (restarts Home Assistant Core), and wait for Core to return.
+3. Confirm the current file exists and is nonempty with `ls -lh /config/home-assistant.log` on the Terminal & SSH app. The file is named `home-assistant.log` and resides in HA's configuration directory.
+4. Refresh the custom app repository and update **Homelab Grafana Alloy** to v0.1.4.
+5. Verify an active `loki.source.file.homeassistant_core` target in the Alloy UI and query new Loki records.
+
+**Do not install v0.1.4 before enabling and confirming the log file.** This
+version intentionally drops Home Assistant Core's fragmented journal messages
+to avoid duplicates, even if the file is missing.
+
+### Sources and normalization
+
+- Core file: read-only Supervisor `homeassistant_config` map at
+  `/homeassistant/home-assistant.log`. No Docker socket or privileged access.
+  `local.file_match` discovers the active file, and `loki.source.file` tails it.
+  `tail_from_end=true` avoids replaying existing contents on first deployment.
+- One Home Assistant formatted header begins one Loki entry. The multiline
+  processor accumulates Python stack frames and chained exceptions for up to
+  512 lines, flushing after 3 seconds idle. A new header begins a new record.
+  It is **record grouping, not Home Assistant's occurrence deduplication**.
+- Core indexed labels: `host=homeassistant`, `source=homeassistant_core`,
+  `service_name=homeassistant`, `syslog_identifier=homeassistant` and normalized
+  `severity` / `level`. Original file timestamps are parsed including local UTC offset.
+- Journal collection retains the explicit working `path=/var/log/journal` and
+  all existing Docker application severity overrides, raw journal-priority
+  structured metadata and per-service attribution. It excludes only the
+  exact journal identifier `homeassistant` at source before Loki or counters.
+- Both sources flow into the **same** Loki endpoint and existing
+  `homelab_log_events_total` and `homelab_log_service_events_total` counters.
+  Prometheus does not need a new scrape target or new job.
+
+### Queries after the update
+
+```logql
+{host="homeassistant",source="homeassistant_core",severity="error"}
+{host="homeassistant",source="homeassistant_core"} |= "Traceback (most recent call last):"
+{host="homeassistant",source="journal",syslog_identifier="hassio_supervisor"}
+```
+
+To verify Core journal copies are no longer accepted, restrict Loki queries to
+a time range **after** the upgrade and inspect
+`{host="homeassistant",source="journal",syslog_identifier="homeassistant"}`.
+Historic journal copies are not deleted or rewritten.
+
+If the file source shows no targets, confirm both duplicate-log-file and the
+read-only mount. Core file writing increases local I/O, and the read-only map
+exposes the broader HA configuration folder to the Alloy container; treat the
+app as trusted. Only the active `home-assistant.log` is followed; previous
+rotated logs aren't replayed. After a Core restart, new log entries will be
+picked up through file discovery. When the duplicate-file option is disabled,
+Core log collection stops (journal remains intentionally excluded).
+
+### Rollback
+
+To go back to v0.1.2, reinstall the earlier version of the add-on repository
+and verify its journal source. Only once Core journal shipping is restored,
+optionally disable the duplicate file with
+`ha core options --duplicate-log-file=false` and `ha core rebuild`.
