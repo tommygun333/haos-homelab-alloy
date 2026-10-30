@@ -139,3 +139,22 @@ To go back to v0.1.2, reinstall the earlier version of the add-on repository
 and verify its journal source. Only once Core journal shipping is restored,
 optionally disable the duplicate file with
 `ha core options --duplicate-log-file=false` and `ha core rebuild`.
+
+
+## v0.1.5 — Actual HAOS log-file header format (current)
+
+The HAOS duplicate file on this machine emits timestamps like
+`2026-10-30 10:47:46.401 WARNING`, **without an embedded UTC offset**.
+V0.1.4 required a `+01:00` suffix in both its multiline matcher and
+severity parser, so no line was recognized as a record start and tracebacks
+were passed through as separate `unknown` entries.
+
+The v0.1.5 parser accepts headers with or without an offset. Timestamp
+parsing uses a local `Europe/Bratislava` location for zoneless headers,
+with offset-bearing fallback. The original `/homeassistant/home-assistant.log`
+file source, journal exclusion of Core copies, and all metric families are
+unchanged. No additional Core rebuild is needed; update the Alloy app only.
+
+Validation must include a fresh traceback produced **after** the v0.1.5
+update. Historical split entries retain their old labels in Loki. Entries
+without an explicit offset are ambiguous at the autumn DST clock change.

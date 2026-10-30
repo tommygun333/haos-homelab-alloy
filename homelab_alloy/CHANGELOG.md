@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.5 — Fix Core log header detection and traceback grouping
+
+- Accept timezone-less HAOS log-file headers (observed `2026-10-30 10:47:46.401 WARNING`) and offset-bearing headers.
+- Fix severity extraction and join chained Python tracebacks before Loki and Prometheus counters.
+- Parse local timestamps as `Europe/Bratislava`, with explicit-offset fallback.
+- Preserve all journal processing and v0.1.4 file/journal source separation.
+- Add regression fixtures for the real HAOS header and both timestamp formats.
+
+
 ## 0.1.4 — Native Home Assistant Core log-file collection
 
 - Collect complete HA Core logging records from the native duplicate log file.

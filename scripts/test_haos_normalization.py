@@ -13,10 +13,10 @@ app = (root / "homelab_alloy/config.yaml").read_text()
 
 # Exactly one HA formatted header begins a new event. Chained tracebacks do
 # not begin new events, and unrelated events must not be combined.
-HEADER = re.compile(r'^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}[+-]\d{2}:\d{2} (?:DEBUG|INFO|WARNING|ERROR|CRITICAL)\b')
-EXTRACT = re.compile(r'^(?P<ha_timestamp>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}[+-]\d{2}:\d{2}) (?P<app_level>DEBUG|INFO|WARNING|ERROR|CRITICAL)\b')
+HEADER = re.compile(r'^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}(?:[+-]\d{2}:\d{2})? (?:DEBUG|INFO|WARNING|ERROR|CRITICAL)\b')
+EXTRACT = re.compile(r'^(?P<ha_timestamp>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}(?:[+-]\d{2}:\d{2})?) (?P<app_level>DEBUG|INFO|WARNING|ERROR|CRITICAL)\b')
 lines = [
-    "2026-10-30 10:16:07.618+01:00 ERROR (MainThread) [homeassistant.helpers.event] Error while processing template",
+    "2026-10-30 10:16:07.618 ERROR (MainThread) [homeassistant.helpers.event] Error while processing template",
     "Traceback (most recent call last):",
     '  File "/usr/src/homeassistant/homeassistant/helpers/template/extensions/math.py", line 381, in forgiving_round',
     "    value = round(float(value), precision)",
@@ -34,7 +34,7 @@ lines = [
     '  File "/usr/src/homeassistant/homeassistant/helpers/template/__init__.py", line 466, in async_render',
     '    raise TemplateError(err) from err',
     "homeassistant.exceptions.TemplateError: ValueError: Template error",
-    "2026-10-30 10:16:08.105+01:00 INFO (MainThread) [homeassistant.core] Next event",
+    "2026-10-30 10:16:08.105 INFO (MainThread) [homeassistant.core] Next event",
     "2026-10-30 10:16:09.311+01:00 WARNING (MainThread) [homeassistant.helpers.event] Slow template",
 ]
 groups=[]
@@ -46,9 +46,26 @@ for line in lines:
     else:
         raise AssertionError('orphan continuation')
 assert list(map(len,groups)) == [18,1,1], list(map(len,groups))
+# Regression: the actual 2026-10-30 HAOS file has NO +01:00 suffix.
+# V0.1.4's mandatory offset caused every line to fall through ungrouped,
+# and severity extraction to yield 'unknown'. Support both real formats.
+real_header = '2026-10-30 10:47:46.401 WARNING (SyncWorker_0) [homeassistant.loader] We found a custom integration'
+offset_header = '2026-10-30 10:47:46.401+01:00 WARNING (SyncWorker_0) [homeassistant.loader] We found a custom integration'
+for header in (real_header, offset_header):
+    assert HEADER.match(header), header
+    assert EXTRACT.match(header)['app_level'] == 'WARNING', header
+for trace_line in ('Traceback (most recent call last):', '  File "some.py", line 4', 'ValueError: failure'):
+    assert not HEADER.match(trace_line), trace_line
+
+# A timezone-less timestamp comes from HA's configured local clock, not UTC.
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
+a = datetime.strptime('2026-10-30 10:47:46.401', '%Y-%m-%d %H:%M:%S.%f').replace(tzinfo=ZoneInfo('Europe/Bratislava'))
+b = datetime.strptime('2026-10-30 10:47:46.401+01:00', '%Y-%m-%d %H:%M:%S.%f%z')
+assert a.astimezone(timezone.utc) == b.astimezone(timezone.utc)
 assert groups[0].count('Traceback (most recent call last):') == 3
 assert [EXTRACT.match(g[0]).group('app_level').lower() for g in groups] == ['error','info','warning']
-assert groups[0][0].startswith('2026-10-30 10:16:07.618+01:00 ERROR')
+assert groups[0][0].startswith('2026-10-30 10:16:07.618 ERROR')
 assert 'level=error' not in lines[-1]  # false match in ordinary text shouldn't be relevant
 
 # Only precise Core identifier is excluded; other HAOS/Supervisor apps remain.
@@ -58,7 +75,7 @@ assert not REJECT_CORE.fullmatch('hassio_supervisor')
 assert not REJECT_CORE.fullmatch('app_9f46d388_homelab_alloy')
 assert not REJECT_CORE.fullmatch('dockerd')
 
-assert 'version: "0.1.4"' in app
+assert 'version: "0.1.5"' in app
 assert 'path          = "/var/log/journal"' in alloy
 assert 'source_labels = ["__journal_syslog_identifier"]\n    regex         = "homeassistant"\n    action        = "drop"' in alloy
 assert alloy.index('action        = "drop"') < alloy.index('target_label  = "unit"')
@@ -69,7 +86,9 @@ assert 'local.file_match "homeassistant_core"' in alloy
 assert '__path__          = "/homeassistant/home-assistant.log"' in alloy
 assert 'tail_from_end = true' in alloy
 assert 'source            = "ha_timestamp"' in alloy
-assert 'format            = "2006-01-02 15:04:05.000-07:00"' in alloy
+assert 'format            = "2006-01-02 15:04:05.000"' in alloy
+assert 'fallback_formats  = ["2006-01-02 15:04:05.000-07:00"]' in alloy
+assert 'location          = "Europe/Bratislava"' in alloy
 assert HEADER.pattern in alloy
 assert EXTRACT.pattern in alloy
 assert 'max_lines     = 512' in alloy
@@ -108,4 +127,4 @@ for msg, journal, expected in SEVERITY_CASES:
 for pattern in (PYLOG, GOTIME, GOLEVEL):
     assert pattern.pattern in alloy, pattern.pattern
 
-print('Passed Core traceback, chained exceptions, timestamps, severities, source exclusion, and pipeline contract tests.')
+print('Passed actual HAOS timestamp/no-offset fixture, timezone-aware timestamp, traceback grouping, severity and pipeline contracts.')

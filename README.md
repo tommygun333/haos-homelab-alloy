@@ -122,3 +122,12 @@ collected from `/var/log/journal`.
 --duplicate-log-file=true` and then `ha core rebuild`; verify the file exists
 in the configuration directory. Only then install v0.1.4. Source and scraper
 label contracts are documented in [`homelab_alloy/DOCS.md`](homelab_alloy/DOCS.md).
+
+
+## v0.1.5 — Core traceback parsing fix
+
+v0.1.4 did not recognize this HAOS installation's timezone-less log headers.
+The new parser recognizes both `2026-10-30 10:47:46.401 WARNING ...` and
+`2026-10-30 10:47:46.401+01:00 WARNING ...`, groups exceptions before
+counting, and interprets zoneless timestamps in `Europe/Bratislava`.
+No extra Home Assistant Core rebuild is needed; update the custom app normally.

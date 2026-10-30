@@ -239,22 +239,29 @@ loki.source.file "homeassistant_core" {
 loki.process "homeassistant_core" {
   forward_to = [loki.write.central.receiver, loki.process.severity_counters.receiver, loki.process.service_counters.receiver]
 
-  // Home Assistant's own formatted record header is the only firstline.
+  // Home Assistant file records may have local timestamps either WITHOUT
+  // timezone offsets (2026-10-30 10:47:46.401 WARNING...) or WITH offsets.
+  // Both must count as first lines. The exception body must not match.
   // Internal traceback lines, nested tracebacks and chained exceptions
   // remain part of the same logging event.
   stage.multiline {
-    firstline     = `^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}[+-]\d{2}:\d{2} (?:DEBUG|INFO|WARNING|ERROR|CRITICAL)\b`
+    firstline     = `^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}(?:[+-]\d{2}:\d{2})? (?:DEBUG|INFO|WARNING|ERROR|CRITICAL)\b`
     max_wait_time = "3s"
     max_lines     = 512
   }
 
   // Parse the original application-level timestamp and severity.
   stage.regex {
-    expression = `^(?P<ha_timestamp>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}[+-]\d{2}:\d{2}) (?P<app_level>DEBUG|INFO|WARNING|ERROR|CRITICAL)\b`
+    expression = `^(?P<ha_timestamp>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}(?:[+-]\d{2}:\d{2})?) (?P<app_level>DEBUG|INFO|WARNING|ERROR|CRITICAL)\b`
   }
   stage.timestamp {
     source            = "ha_timestamp"
-    format            = "2006-01-02 15:04:05.000-07:00"
+    format            = "2006-01-02 15:04:05.000"
+    fallback_formats  = ["2006-01-02 15:04:05.000-07:00"]
+    // The duplicate file on this HAOS install uses local time without an offset.
+    // Alloy runs with UTC as its own container timezone; interpret the file
+    // timestamp in the HA local timezone, not the collector timezone.
+    location          = "Europe/Bratislava"
     action_on_failure = "skip"
   }
   stage.template {
