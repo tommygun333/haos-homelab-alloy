@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.9 — Classify HAOS Docker BuildKit progress without hiding failures
+
+- Detect normal `#N` BuildKit progress from `app_builder_*` journal sources and classify it as `info` rather than treating stderr's journal priority 3 as an error.
+- Keep genuine `ERROR`/failed-build output and unrecognized lines at the original journal severity; preserve original journal priority as structured metadata.
+- Add source-scoped regression fixtures, including failed builds and unrelated apps, and extend the real Alloy runtime test.
+- Leave ANSI decolorization, application severity rules, Core multiline collection, Loki and Prometheus counters unchanged.
+
 ## 0.1.8 — Normalize OpenCode timestamp= application levels
 
 - Recognize anchored `timestamp=... level=INFO/WARN/ERROR` log headers used by the HAOS OpenCode app alongside the existing `ts=...` and `time=...` forms.

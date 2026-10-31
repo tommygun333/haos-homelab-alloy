@@ -75,7 +75,7 @@ assert not REJECT_CORE.fullmatch('hassio_supervisor')
 assert not REJECT_CORE.fullmatch('app_9f46d388_homelab_alloy')
 assert not REJECT_CORE.fullmatch('dockerd')
 
-assert 'version: "0.1.8"' in app
+assert 'version: "0.1.9"' in app
 assert 'path          = "/var/log/journal"' in alloy
 assert 'source_labels = ["__journal_syslog_identifier"]\n    regex         = "homeassistant"\n    action        = "drop"' in alloy
 assert alloy.index('action        = "drop"') < alloy.index('target_label  = "unit"')
@@ -166,7 +166,7 @@ journal_normalizer = alloy.split('loki.process "journal_normalize_metadata" {', 
 # though its regexes passed the old Python fixtures.
 assert 'stage.match {' not in journal_normalizer, 'Severity override is incorrectly guarded by stage.match'
 assert 'selector = `{unit="docker.service"}`' not in journal_normalizer
-assert journal_normalizer.count('stage.regex {') == 3
+assert journal_normalizer.count('stage.regex {') == 4
 assert journal_normalizer.count('source = "effective_severity"') == 1
 assert journal_normalizer.count('stage.labels {') == 1
 assert 'source = "severity_origin"' in journal_normalizer
@@ -227,3 +227,36 @@ for line, journal, expected in OPENCODE_CASES:
 assert '(?:ts|timestamp)=' in GOTIME.pattern
 assert 'stage.decolorize {}' in journal_normalizer
 print('Passed v0.1.8 OpenCode timestamp= severity overrides and embedded-word fallbacks.')
+
+
+# v0.1.9: BuildKit logs from HAOS app builders use journal PRIORITY=3 for
+# ordinary progress. Do not hide genuine failures or affect other services.
+BUILDKIT = re.compile(r'(?i)^#[0-9]+\s+(?P<buildkit_progress>CACHED\b|DONE\b|\[[^\]\r\n]+\]|transferring\b|building\b|exporting\b|writing\b|naming\b|unpacking\b|extracting\b|resolving\b|resolve\b)')
+BUILDER = 'app_builder_9f46d388_homelab_alloy'
+BUILD_CASES = [
+    ('#0 building with "default" instance using docker driver', BUILDER, 'info'),
+    ('#1 [internal] load build definition from Dockerfile', BUILDER, 'info'),
+    ('#1 transferring dockerfile: 568B done', BUILDER, 'info'),
+    ('#2 [internal] load metadata for docker.io/grafana/alloy:v1.20.1', BUILDER, 'info'),
+    ('#4 transferring context: 14.47kB done', BUILDER, 'info'),
+    ('#5 [1/2] FROM docker.io/grafana/alloy:v1.20.1', BUILDER, 'info'),
+    ('#5 CACHED', BUILDER, 'info'),
+    ('#4 DONE 0.0s', BUILDER, 'info'),
+    ('#6 exporting to image', BUILDER, 'info'),
+    ('#6 ERROR: failed to solve: build step exited with code 1', BUILDER, 'error'),
+    ('#6 0.13 ERROR: failed inside a RUN step', BUILDER, 'error'),
+    ('ERROR: failed to solve: build terminated', BUILDER, 'error'),
+    ('failed to solve: process did not complete successfully', BUILDER, 'error'),
+    ('#5 CACHED', 'dockerd', 'error'),
+    ('#5 CACHED', 'app_f5588468_ha_opencode', 'error'),
+    ('Buildkit string mentioning #5 CACHED inside payload', BUILDER, 'error'),
+]
+for line, identifier, expected in BUILD_CASES:
+    progress = BUILDKIT.search(line)
+    actual = 'info' if progress and re.fullmatch(r'app_builder_[A-Za-z0-9_]+', identifier) else 'error'
+    assert actual == expected, (line, actual, expected)
+assert BUILDKIT.pattern in journal_normalizer
+assert 'buildkit_progress{{- else -}}' in journal_normalizer
+assert 'app_builder_[A-Za-z0-9_]+$' in journal_normalizer
+assert journal_normalizer.index('stage.decolorize {}') < journal_normalizer.index('(?P<buildkit_progress>') < journal_normalizer.index('source = "effective_severity"')
+print('Passed v0.1.9 builder progress and true-failure severity regression fixtures.')

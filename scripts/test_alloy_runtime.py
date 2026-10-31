@@ -55,6 +55,28 @@ local.file_match "test" {
       severity_origin   = "journal_priority",
     },
     {
+      __path__          = "/fixtures/builder.log",
+      host              = "homeassistant",
+      source            = "journal",
+      unit              = "docker.service",
+      syslog_identifier = "app_builder_9f46d388_homelab_alloy",
+      fixture           = "builder",
+      severity          = "error",
+      level             = "error",
+      severity_origin   = "journal_priority",
+    },
+    {
+      __path__          = "/fixtures/nonbuilder.log",
+      host              = "homeassistant",
+      source            = "journal",
+      unit              = "docker.service",
+      syslog_identifier = "app_f5588468_ha_opencode",
+      fixture           = "nonbuilder",
+      severity          = "error",
+      level             = "error",
+      severity_origin   = "journal_priority",
+    },
+    {
       __path__          = "/fixtures/opencode.log",
       host              = "homeassistant",
       source            = "journal",
@@ -107,10 +129,29 @@ OPENCODE = (
     'timestamp=2026-10-30T18:47:07.720Z level=ERROR run=1678d4f8 message=failed\n'
     'timestamp=2026-10-30T18:48:07.720Z message=event event.data=level=ERROR\n'
 )
+BUILDER = (
+    '#0 building with "default" instance using docker driver\n'
+    '#1 [internal] load build definition from Dockerfile\n'
+    '#1 transferring dockerfile: 568B done\n'
+    '#1 DONE 0.0s\n'
+    '#2 [internal] load metadata for docker.io/grafana/alloy:v1.20.1\n'
+    '#3 [internal] load .dockerignore\n'
+    '#3 transferring context: 2B done\n'
+    '#4 [internal] load build context\n'
+    '#4 transferring context: 14.47kB done\n'
+    '#5 [1/2] FROM docker.io/grafana/alloy:v1.20.1@sha256:abc\n'
+    '#5 CACHED\n'
+    '#6 ERROR: failed to build stage\n'
+    '#6 0.13 ERROR: failed in RUN step\n'
+    'failed to solve: process did not complete successfully\n'
+    'ERROR: failed to solve\n'
+)
+NONBUILDER = '#5 CACHED\n'
 EXPECTED = {('supervisor', 'info'): 1, ('supervisor', 'warning'): 1,
             ('supervisor', 'error'): 2, ('docker', 'error'): 1,
             ('opencode', 'info'): 1, ('opencode', 'warning'): 1,
-            ('opencode', 'error'): 2}
+            ('opencode', 'error'): 2, ('builder', 'info'): 11,
+            ('builder', 'error'): 4, ('nonbuilder', 'error'): 1}
 
 
 def metrics(url: str) -> dict[tuple[str, str], float]:
@@ -136,6 +177,8 @@ def run() -> None:
         (d/'supervisor.log').write_text('')
         (d/'docker.log').write_text('')
         (d/'opencode.log').write_text('')
+        (d/'builder.log').write_text('')
+        (d/'nonbuilder.log').write_text('')
         with socket.socket() as s:
             s.bind(('127.0.0.1', 0))
             port = s.getsockname()[1]
@@ -168,6 +211,8 @@ def run() -> None:
             with (d/'supervisor.log').open('a') as f: f.write(SUPERVISOR)
             with (d/'docker.log').open('a') as f: f.write(DOCKER)
             with (d/'opencode.log').open('a') as f: f.write(OPENCODE)
+            with (d/'builder.log').open('a') as f: f.write(BUILDER)
+            with (d/'nonbuilder.log').open('a') as f: f.write(NONBUILDER)
             until = time.monotonic()+40
             found = {}
             while time.monotonic()<until:
@@ -178,7 +223,7 @@ def run() -> None:
                 time.sleep(.5)
             assert all(found.get(k) == v for k,v in EXPECTED.items()), \
                 f'Expected {EXPECTED}, got {found}'
-            print('PASS: real Alloy runtime normalized ANSI, OpenCode timestamp=INFO/WARN/ERROR, and no-prefix fallback:', found)
+            print('PASS: real Alloy runtime normalized ANSI, OpenCode, BuildKit progress and true errors:', found)
         except Exception:
             print('--- Alloy logs ---', flush=True)
             subprocess.run(['docker','logs',container],check=False)

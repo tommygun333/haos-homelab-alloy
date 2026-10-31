@@ -184,13 +184,22 @@ loki.process "journal_normalize_metadata" {
   stage.regex {
     expression = `(?i)^level=(?P<app_level>TRACE|DEBUG|INFO|NOTICE|WARN|WARNING|ERROR|CRITICAL|FATAL)\b`
   }
+
+  // Home Assistant app rebuilds emit Docker BuildKit progress to stderr,
+  // making journald report PRIORITY=3 even for successful build steps.
+  // Only recognized #N progress syntax is eligible, and ONLY for the
+  // app_builder_* identifier. Actual ERROR/FAILED and unrecognized lines
+  // retain the original journal priority so real build failures stay visible.
+  stage.regex {
+    expression = `(?i)^#[0-9]+\s+(?P<buildkit_progress>CACHED\b|DONE\b|\[[^\]\r\n]+\]|transferring\b|building\b|exporting\b|writing\b|naming\b|unpacking\b|extracting\b|resolving\b|resolve\b)`
+  }
   stage.template {
     source = "effective_severity"
-    template = `{{- if .app_level -}}{{- $lvl := ToLower .app_level -}}{{- if eq $lvl "warn" -}}warning{{- else -}}{{ $lvl }}{{- end -}}{{- else -}}{{ .severity }}{{- end -}}`
+    template = `{{- if .app_level -}}{{- $lvl := ToLower .app_level -}}{{- if eq $lvl "warn" -}}warning{{- else -}}{{ $lvl }}{{- end -}}{{- else if and .buildkit_progress (regexMatch "^app_builder_[A-Za-z0-9_]+$" (printf "%v" .syslog_identifier)) -}}info{{- else -}}{{ .severity }}{{- end -}}`
   }
   stage.template {
     source = "severity_origin"
-    template = `{{- if .app_level -}}message_prefix{{- else -}}{{ .severity_origin }}{{- end -}}`
+    template = `{{- if .app_level -}}message_prefix{{- else if and .buildkit_progress (regexMatch "^app_builder_[A-Za-z0-9_]+$" (printf "%v" .syslog_identifier)) -}}buildkit_progress{{- else -}}{{ .severity_origin }}{{- end -}}`
   }
   stage.labels {
     values = { severity = "effective_severity", level = "effective_severity" }
