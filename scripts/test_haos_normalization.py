@@ -75,7 +75,7 @@ assert not REJECT_CORE.fullmatch('hassio_supervisor')
 assert not REJECT_CORE.fullmatch('app_9f46d388_homelab_alloy')
 assert not REJECT_CORE.fullmatch('dockerd')
 
-assert 'version: "0.1.10"' in app
+assert 'version: "0.1.11"' in app
 assert 'path          = "/var/log/journal"' in alloy
 assert 'source_labels = ["__journal_syslog_identifier"]\n    regex         = "homeassistant"\n    action        = "drop"' in alloy
 assert alloy.index('action        = "drop"') < alloy.index('target_label  = "unit"')
@@ -262,28 +262,35 @@ assert journal_normalizer.index('stage.decolorize {}') < journal_normalizer.inde
 print('Passed v0.1.9 builder progress and true-failure severity regression fixtures.')
 
 
-# v0.1.10: s6-rc prints its own severity, although HAOS app journal logs may
-# have error priority even during successful service startup.
-S6_PATTERN = r'(?i)^s6-rc:\s+(?P<app_level>INFO|WARN|WARNING|ERROR|FATAL):\s+'
-S6 = re.compile(S6_PATTERN)
-S6_CASES = [
+# v0.1.11: classify a format, not each executable/add-on prefix separately.
+# Start-anchored executable/path + colon + explicit level + colon. No guessing
+# from the presence of "error" or "info" later in an arbitrary log message.
+PROGRAM_LEVEL_PATTERN = r'(?i)^[A-Za-z0-9_./-]{1,160}:[ \t]+(?P<app_level>TRACE|DEBUG|INFO|NOTICE|WARN|WARNING|ERROR|CRITICAL|FATAL):(?:[ \t]|$)'
+PROGRAM_LEVEL = re.compile(PROGRAM_LEVEL_PATTERN)
+PROGRAM_CASES = [
     ('s6-rc: info: service legacy-services successfully started', 'error', 'info'),
-    ('\x1b[32ms6-rc: info: service legacy-services successfully started\x1b[0m', 'error', 'info'),
+    ('\x1b[32ms6-rc: info: service prepare successfully started\x1b[0m', 'error', 'info'),
     ('s6-rc: warning: service prepare failed to start', 'error', 'warning'),
     ('s6-rc: fatal: unable to take locks', 'info', 'fatal'),
     ('s6-rc: error: service prepare failed', 'info', 'error'),
-    ('s6-rc: INFO: service legacy-services started', 'error', 'info'),
-    ('s6-rc: info: service prepare successfully started', 'info', 'info'),
-    ('other application logs s6-rc: info: in message body', 'error', 'error'),
-    ('s6-rc: service legacy-services failed to start', 'error', 'error'),
-    ('s6-rc: info:service legacy-services started', 'error', 'error'),
+    ('cont-init: info: /etc/cont-init.d/30-esphome-fork.sh exited 0', 'error', 'info'),
+    ('/package/admin/s6-overlay/libexec/preinit: info: /run permissions: uid=0 (root), gid=0 (root), perms=oxorgxgruxuwur', 'error', 'info'),
+    ('/package/admin/s6-overlay/libexec/preinit: warning: permissions look wrong', 'error', 'warning'),
+    ('another-tool: DEBUG: task started', 'error', 'debug'),
+    ('my-service: CRITICAL: database corrupted', 'info', 'critical'),
+    ('other application mentions s6-rc: info: in the body', 'error', 'error'),
+    ('cont-init: process failed without a severity token', 'error', 'error'),
+    ('cont-init: info:script.sh executed', 'error', 'error'),
+    ('https://example.com: info: this is a URL not a log prefix', 'error', 'error'),
+    ('Weird arbitrary phrase: info: not a program token', 'error', 'error'),
 ]
-for line, journal, expected in S6_CASES:
+for line, journal, expected in PROGRAM_CASES:
     cleaned = ANSI.sub('', line)
-    match = S6.search(cleaned)
+    match = PROGRAM_LEVEL.search(cleaned)
     level = match['app_level'].lower() if match else None
     actual = ('warning' if level == 'warn' else level) or journal
     assert actual == expected, (line, actual, expected)
-assert S6_PATTERN in journal_normalizer
-assert journal_normalizer.index('stage.decolorize {}') < journal_normalizer.index('(?P<app_level>INFO|WARN|WARNING|ERROR|FATAL)') < journal_normalizer.index('source = "effective_severity"')
-print('Passed v0.1.10 s6-rc info/warning/error/fatal and unknown-prefix fixtures.')
+assert PROGRAM_LEVEL_PATTERN in journal_normalizer
+assert journal_normalizer.index('stage.decolorize {}') < journal_normalizer.index(PROGRAM_LEVEL_PATTERN) < journal_normalizer.index('source = "effective_severity"')
+assert '^(?i)^s6-rc' not in journal_normalizer
+print('Passed generic executable/path level parsing, ANSI, and negative fixtures.')

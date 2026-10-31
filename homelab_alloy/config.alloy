@@ -185,12 +185,15 @@ loki.process "journal_normalize_metadata" {
     expression = `(?i)^level=(?P<app_level>TRACE|DEBUG|INFO|NOTICE|WARN|WARNING|ERROR|CRITICAL|FATAL)\b`
   }
 
-  // s6-rc (used by HAOS apps) prints an explicit severity in the message,
-  // often while journald assigns stderr PRIORITY=3 even to "info" notices.
-  // Accept only a start-anchored s6-rc prefix and standard level token;
-  // genuine warning/error/fatal and lines without a level retain their meaning.
+  // General program-style prefix, independent of any particular HAOS app:
+  //   s6-rc: info: ...
+  //   cont-init: info: ...
+  //   /package/admin/s6-overlay/libexec/preinit: info: ...
+  // A bounded executable/program token before ': LEVEL:' avoids matching
+  // severity words buried later in arbitrary prose. ANSI was stripped above.
+  // Journald priority is the fallback when no explicit level is recognized.
   stage.regex {
-    expression = `(?i)^s6-rc:\s+(?P<app_level>INFO|WARN|WARNING|ERROR|FATAL):\s+`
+    expression = `(?i)^[A-Za-z0-9_./-]{1,160}:[ \t]+(?P<app_level>TRACE|DEBUG|INFO|NOTICE|WARN|WARNING|ERROR|CRITICAL|FATAL):(?:[ \t]|$)`
   }
 
   // Home Assistant app rebuilds emit Docker BuildKit progress to stderr,

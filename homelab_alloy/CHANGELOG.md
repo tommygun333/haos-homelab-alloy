@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.11 — Generalize prefixed application severity detection
+
+- Replace the s6-rc-specific parser with one anchored **program/path: LEVEL: message** format rule, matching s6-rc, cont-init, s6-overlay executables, and unrelated applications without per-process allowlists.
+- Keep strict, bounded prefix syntax; arbitrary mentions of `info`/`error` in a message body do not override journal priority.
+- Preserve the existing timestamp, logfmt, OpenCode, ANSI, Docker BuildKit, and HA Core native-file handling and original journal-priority metadata. The fallback policy for unmarked Docker lines is intentionally unchanged to avoid silently losing real errors.
+- Add real HAOS ESPHome/s6-overlay examples and negative cases to Python fixtures and the real Alloy Docker runtime test.
+
 ## 0.1.10 — Normalize s6-rc service startup messages
 
 - Recognize anchored `s6-rc: info:`, `warning:`, `error:` and `fatal:` log prefixes, including ANSI-colored lines, before the existing application-level severity templates.
