@@ -77,6 +77,17 @@ local.file_match "test" {
       severity_origin   = "journal_priority",
     },
     {
+      __path__          = "/fixtures/s6.log",
+      host              = "homeassistant",
+      source            = "journal",
+      unit              = "docker.service",
+      syslog_identifier = "app_core_configurator",
+      fixture           = "s6",
+      severity          = "error",
+      level             = "error",
+      severity_origin   = "journal_priority",
+    },
+    {
       __path__          = "/fixtures/opencode.log",
       host              = "homeassistant",
       source            = "journal",
@@ -147,11 +158,21 @@ BUILDER = (
     'ERROR: failed to solve\n'
 )
 NONBUILDER = '#5 CACHED\n'
+S6 = (
+    's6-rc: info: service legacy-services successfully started\n'
+    '\x1b[32ms6-rc: info: service prepare successfully started\x1b[0m\n'
+    's6-rc: warning: service init failed to start\n'
+    's6-rc: fatal: unable to take locks\n'
+    's6-rc: error: service prepare failed\n'
+    's6-rc: service something failed without a severity token\n'
+    'ordinary message mentioning s6-rc: info: in the body\n'
+)
 EXPECTED = {('supervisor', 'info'): 1, ('supervisor', 'warning'): 1,
             ('supervisor', 'error'): 2, ('docker', 'error'): 1,
             ('opencode', 'info'): 1, ('opencode', 'warning'): 1,
             ('opencode', 'error'): 2, ('builder', 'info'): 11,
-            ('builder', 'error'): 4, ('nonbuilder', 'error'): 1}
+            ('builder', 'error'): 4, ('nonbuilder', 'error'): 1,
+            ('s6', 'info'): 2, ('s6', 'warning'): 1, ('s6', 'fatal'): 1, ('s6', 'error'): 3}
 
 
 def metrics(url: str) -> dict[tuple[str, str], float]:
@@ -179,6 +200,7 @@ def run() -> None:
         (d/'opencode.log').write_text('')
         (d/'builder.log').write_text('')
         (d/'nonbuilder.log').write_text('')
+        (d/'s6.log').write_text('')
         with socket.socket() as s:
             s.bind(('127.0.0.1', 0))
             port = s.getsockname()[1]
@@ -213,6 +235,7 @@ def run() -> None:
             with (d/'opencode.log').open('a') as f: f.write(OPENCODE)
             with (d/'builder.log').open('a') as f: f.write(BUILDER)
             with (d/'nonbuilder.log').open('a') as f: f.write(NONBUILDER)
+            with (d/'s6.log').open('a') as f: f.write(S6)
             until = time.monotonic()+40
             found = {}
             while time.monotonic()<until:
@@ -223,7 +246,7 @@ def run() -> None:
                 time.sleep(.5)
             assert all(found.get(k) == v for k,v in EXPECTED.items()), \
                 f'Expected {EXPECTED}, got {found}'
-            print('PASS: real Alloy runtime normalized ANSI, OpenCode, BuildKit progress and true errors:', found)
+            print('PASS: real Alloy runtime normalized ANSI, OpenCode, BuildKit, s6-rc and real errors:', found)
         except Exception:
             print('--- Alloy logs ---', flush=True)
             subprocess.run(['docker','logs',container],check=False)

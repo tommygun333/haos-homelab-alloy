@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.10 — Normalize s6-rc service startup messages
+
+- Recognize anchored `s6-rc: info:`, `warning:`, `error:` and `fatal:` log prefixes, including ANSI-colored lines, before the existing application-level severity templates.
+- Prevent successful HAOS app startup messages from being falsely counted as errors when Docker/journald assigns PRIORITY=3. Explicit warnings/errors/fatal remain appropriately classified; messages with no recognized s6 level keep journal priority.
+- Add actual Configurator app startup fixture and negative cases to Python and pinned Alloy Docker runtime tests.
+- Preserve existing Core traceback collection, OpenCode, BuildKit, Supervisor and Prometheus counter logic.
+
 ## 0.1.9 — Classify HAOS Docker BuildKit progress without hiding failures
 
 - Detect normal `#N` BuildKit progress from `app_builder_*` journal sources and classify it as `info` rather than treating stderr's journal priority 3 as an error.

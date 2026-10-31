@@ -75,7 +75,7 @@ assert not REJECT_CORE.fullmatch('hassio_supervisor')
 assert not REJECT_CORE.fullmatch('app_9f46d388_homelab_alloy')
 assert not REJECT_CORE.fullmatch('dockerd')
 
-assert 'version: "0.1.9"' in app
+assert 'version: "0.1.10"' in app
 assert 'path          = "/var/log/journal"' in alloy
 assert 'source_labels = ["__journal_syslog_identifier"]\n    regex         = "homeassistant"\n    action        = "drop"' in alloy
 assert alloy.index('action        = "drop"') < alloy.index('target_label  = "unit"')
@@ -166,7 +166,7 @@ journal_normalizer = alloy.split('loki.process "journal_normalize_metadata" {', 
 # though its regexes passed the old Python fixtures.
 assert 'stage.match {' not in journal_normalizer, 'Severity override is incorrectly guarded by stage.match'
 assert 'selector = `{unit="docker.service"}`' not in journal_normalizer
-assert journal_normalizer.count('stage.regex {') == 4
+assert journal_normalizer.count('stage.regex {') == 5
 assert journal_normalizer.count('source = "effective_severity"') == 1
 assert journal_normalizer.count('stage.labels {') == 1
 assert 'source = "severity_origin"' in journal_normalizer
@@ -260,3 +260,30 @@ assert 'buildkit_progress{{- else -}}' in journal_normalizer
 assert 'app_builder_[A-Za-z0-9_]+$' in journal_normalizer
 assert journal_normalizer.index('stage.decolorize {}') < journal_normalizer.index('(?P<buildkit_progress>') < journal_normalizer.index('source = "effective_severity"')
 print('Passed v0.1.9 builder progress and true-failure severity regression fixtures.')
+
+
+# v0.1.10: s6-rc prints its own severity, although HAOS app journal logs may
+# have error priority even during successful service startup.
+S6_PATTERN = r'(?i)^s6-rc:\s+(?P<app_level>INFO|WARN|WARNING|ERROR|FATAL):\s+'
+S6 = re.compile(S6_PATTERN)
+S6_CASES = [
+    ('s6-rc: info: service legacy-services successfully started', 'error', 'info'),
+    ('\x1b[32ms6-rc: info: service legacy-services successfully started\x1b[0m', 'error', 'info'),
+    ('s6-rc: warning: service prepare failed to start', 'error', 'warning'),
+    ('s6-rc: fatal: unable to take locks', 'info', 'fatal'),
+    ('s6-rc: error: service prepare failed', 'info', 'error'),
+    ('s6-rc: INFO: service legacy-services started', 'error', 'info'),
+    ('s6-rc: info: service prepare successfully started', 'info', 'info'),
+    ('other application logs s6-rc: info: in message body', 'error', 'error'),
+    ('s6-rc: service legacy-services failed to start', 'error', 'error'),
+    ('s6-rc: info:service legacy-services started', 'error', 'error'),
+]
+for line, journal, expected in S6_CASES:
+    cleaned = ANSI.sub('', line)
+    match = S6.search(cleaned)
+    level = match['app_level'].lower() if match else None
+    actual = ('warning' if level == 'warn' else level) or journal
+    assert actual == expected, (line, actual, expected)
+assert S6_PATTERN in journal_normalizer
+assert journal_normalizer.index('stage.decolorize {}') < journal_normalizer.index('(?P<app_level>INFO|WARN|WARNING|ERROR|FATAL)') < journal_normalizer.index('source = "effective_severity"')
+print('Passed v0.1.10 s6-rc info/warning/error/fatal and unknown-prefix fixtures.')
