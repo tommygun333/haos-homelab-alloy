@@ -75,7 +75,7 @@ assert not REJECT_CORE.fullmatch('hassio_supervisor')
 assert not REJECT_CORE.fullmatch('app_9f46d388_homelab_alloy')
 assert not REJECT_CORE.fullmatch('dockerd')
 
-assert 'version: "0.1.11"' in app
+assert 'version: "0.1.12"' in app
 assert 'path          = "/var/log/journal"' in alloy
 assert 'source_labels = ["__journal_syslog_identifier"]\n    regex         = "homeassistant"\n    action        = "drop"' in alloy
 assert alloy.index('action        = "drop"') < alloy.index('target_label  = "unit"')
@@ -294,3 +294,39 @@ assert PROGRAM_LEVEL_PATTERN in journal_normalizer
 assert journal_normalizer.index('stage.decolorize {}') < journal_normalizer.index(PROGRAM_LEVEL_PATTERN) < journal_normalizer.index('source = "effective_severity"')
 assert '^(?i)^s6-rc' not in journal_normalizer
 print('Passed generic executable/path level parsing, ANSI, and negative fixtures.')
+
+# v0.1.12: structured JSON must use a valid top-level level, without parsing
+# nested data.level or reclassifying malformed JSON and arbitrary text.
+import json
+JSON_LEVELS = {'trace', 'debug', 'info', 'notice', 'warn', 'warning',
+               'error', 'critical', 'fatal', 'alert', 'emergency'}
+JSON_CASES = [
+    ('{"type":"log","level":"info","logger":"mcp-server","data":{"action":"call_tool","tool":"get_error_log"},"timestamp":"2026-11-02T12:15:39.914Z"}', 'error', 'info', 'json_level'),
+    ('{"level":"WARNING","message":"retrying"}', 'error', 'warning', 'json_level'),
+    ('{"level":"WARN","message":"retrying"}', 'error', 'warning', 'json_level'),
+    ('{"level":"ERROR","message":"failed"}', 'info', 'error', 'json_level'),
+    ('{"level":"critical","message":"failed"}', 'info', 'critical', 'json_level'),
+    ('{"level":"off","message":"unknown level"}', 'error', 'error', 'journal_priority'),
+    ('{"level":4,"message":"numeric level unsupported"}', 'error', 'error', 'journal_priority'),
+    ('{"data":{"level":"error"},"message":"nested not top level"}', 'info', 'info', 'journal_priority'),
+    ('{"level":null,"message":"null level"}', 'error', 'error', 'journal_priority'),
+    ('{"level":"info", malformed', 'error', 'error', 'journal_priority'),
+    ('plain text mentions "level":"error"', 'info', 'info', 'journal_priority'),
+]
+for line, journal, expected, origin in JSON_CASES:
+    try:
+        decoded = json.loads(ANSI.sub('', line))
+        value = decoded.get('level') if isinstance(decoded, dict) else None
+    except json.JSONDecodeError:
+        value = None
+    app_level = value.lower() if isinstance(value, str) and value.lower() in JSON_LEVELS else None
+    actual = ('warning' if app_level == 'warn' else app_level) or journal
+    actual_origin = 'json_level' if app_level else 'journal_priority'
+    assert (actual, actual_origin) == (expected, origin), (line, actual, actual_origin)
+assert journal_normalizer.index('stage.decolorize {}') < journal_normalizer.index('stage.json {') < journal_normalizer.index('source = "effective_severity"')
+assert 'json_level = "level"' in journal_normalizer
+assert 'drop_malformed = false' in journal_normalizer
+assert journal_normalizer.count('stage.json {') == 1
+assert 'json_level{{- else if' in journal_normalizer
+assert journal_normalizer.count('stage.template {') == 2
+print('Passed v0.1.12 generic JSON severity, malformed inputs, nested-level fallback and ordering fixtures.')

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.12 — Parse top-level JSON log levels generically
+
+- Add Alloy `stage.json` after ANSI decolorization to recognize top-level JSON `level` values without app-specific rules. Reject malformed JSON without dropping records.
+- Allow only known severity tokens and normalize `WARN` to `warning`; keep the existing anchored textual prefix precedence, BuildKit handling, and journald fallback.
+- Mark accepted JSON overrides with `severity_origin=json_level`; retain the original journald priority and use normalized severity for existing Loki labels and Prometheus counters.
+- Add Python fixtures and real Alloy Docker-runtime tests for OpenCode-style JSON INFO/WARN/ERROR/critical, invalid and nested levels, malformed JSON, and plain-text fallbacks. Leave the Core file collector unchanged.
+
 ## 0.1.11 — Generalize prefixed application severity detection
 
 - Replace the s6-rc-specific parser with one anchored **program/path: LEVEL: message** format rule, matching s6-rc, cont-init, s6-overlay executables, and unrelated applications without per-process allowlists.

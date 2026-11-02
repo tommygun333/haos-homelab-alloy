@@ -99,6 +99,17 @@ local.file_match "test" {
       severity_origin   = "journal_priority",
     },
     {
+      __path__          = "/fixtures/json.log",
+      host              = "homeassistant",
+      source            = "journal",
+      unit              = "docker.service",
+      syslog_identifier = "app_f5588468_ha_opencode",
+      fixture           = "json",
+      severity          = "error",
+      level             = "error",
+      severity_origin   = "journal_priority",
+    },
+    {
       __path__          = "/fixtures/opencode.log",
       host              = "homeassistant",
       source            = "journal",
@@ -185,13 +196,25 @@ GENERIC = (
     'new-tool: error: operation failed\n'
     'An unrelated message mentions cont-init: info: in the payload\n'
 )
+JSON_EVENTS = (
+    '{"type":"log","level":"info","logger":"mcp-server","data":{"action":"call_tool","tool":"get_error_log"},"timestamp":"2026-11-02T12:15:39.914Z"}\n'
+    '{"level":"WARN","message":"retrying"}\n'
+    '{"level":"ERROR","message":"failed"}\n'
+    '{"level":"critical","message":"fatal failure"}\n'
+    '{"level":"unexpected","message":"fallback to journal"}\n'
+    '{"data":{"level":"info"},"message":"nested level ignored"}\n'
+    '{"level":"info", malformed\n'
+    'ordinary text mentioning level=INFO in its body\n'
+)
 EXPECTED = {('supervisor', 'info'): 1, ('supervisor', 'warning'): 1,
             ('supervisor', 'error'): 2, ('docker', 'error'): 1,
             ('opencode', 'info'): 1, ('opencode', 'warning'): 1,
             ('opencode', 'error'): 2, ('builder', 'info'): 11,
             ('builder', 'error'): 4, ('nonbuilder', 'error'): 1,
             ('s6', 'info'): 2, ('s6', 'warning'): 1, ('s6', 'fatal'): 1, ('s6', 'error'): 3,
-            ('generic', 'info'): 2, ('generic', 'warning'): 1, ('generic', 'error'): 2}
+            ('generic', 'info'): 2, ('generic', 'warning'): 1, ('generic', 'error'): 2,
+            ('json', 'info'): 1, ('json', 'warning'): 1,
+            ('json', 'critical'): 1, ('json', 'error'): 5}
 
 
 def metrics(url: str) -> dict[tuple[str, str], float]:
@@ -221,6 +244,7 @@ def run() -> None:
         (d/'nonbuilder.log').write_text('')
         (d/'s6.log').write_text('')
         (d/'generic.log').write_text('')
+        (d/'json.log').write_text('')
         with socket.socket() as s:
             s.bind(('127.0.0.1', 0))
             port = s.getsockname()[1]
@@ -257,6 +281,7 @@ def run() -> None:
             with (d/'nonbuilder.log').open('a') as f: f.write(NONBUILDER)
             with (d/'s6.log').open('a') as f: f.write(S6)
             with (d/'generic.log').open('a') as f: f.write(GENERIC)
+            with (d/'json.log').open('a') as f: f.write(JSON_EVENTS)
             until = time.monotonic()+40
             found = {}
             while time.monotonic()<until:
@@ -267,7 +292,7 @@ def run() -> None:
                 time.sleep(.5)
             assert all(found.get(k) == v for k,v in EXPECTED.items()), \
                 f'Expected {EXPECTED}, got {found}'
-            print('PASS: real Alloy runtime normalized ANSI, OpenCode, BuildKit, generic program/path prefixes and real errors:', found)
+            print('PASS: real Alloy runtime normalized ANSI, OpenCode, BuildKit, generic program/path and JSON severities, with fallbacks:', found)
         except Exception:
             print('--- Alloy logs ---', flush=True)
             subprocess.run(['docker','logs',container],check=False)
